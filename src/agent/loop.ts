@@ -36,6 +36,11 @@ export interface ReplyChannel {
 const EDIT_DEBOUNCE_MS = 600;
 
 function rowToAgentMessage(row: MessageRow): Message {
+	// Prefer the full serialized AgentMessage if we have it (preserves tool calls + results)
+	if (row.raw_message && typeof row.raw_message === "object") {
+		return row.raw_message as Message;
+	}
+	// Legacy rows: synthesize a minimal text-only message
 	if (row.role === "user") {
 		return { role: "user", content: [{ type: "text", text: row.content }], timestamp: row.created_at.getTime() };
 	}
@@ -61,6 +66,23 @@ function rowToAgentMessage(row: MessageRow): Message {
 	return { role: "user", content: [{ type: "text", text: row.content }], timestamp: row.created_at.getTime() };
 }
 
+function summarizeForRow(m: AgentMessage): string {
+	if (!Array.isArray(m.content)) return "";
+	const parts: string[] = [];
+	for (const raw of m.content) {
+		const block = raw as unknown as { type: string; text?: string; name?: string };
+		if (block.type === "text") parts.push(String(block.text ?? ""));
+		else if (block.type === "toolCall") parts.push(`[tool: ${String(block.name ?? "?")}]`);
+	}
+	return parts.join("\n").trim();
+}
+
+function rowRoleFor(m: AgentMessage): Role {
+	if (m.role === "toolResult") return "tool";
+	if (m.role === "assistant") return "assistant";
+	return "user";
+}
+
 export async function handleUserMessage(args: {
 	chatId: number;
 	text: string;
@@ -69,7 +91,12 @@ export async function handleUserMessage(args: {
 	const cfg = getConfig();
 	const { chatId, text, reply } = args;
 
-	await insertMessage({ chatId, role: "user", content: text });
+	const userMsg: AgentMessage = {
+		role: "user",
+		content: [{ type: "text", text }],
+		timestamp: Date.now(),
+	};
+	await insertMessage({ chatId, role: "user", content: text, rawMessage: userMsg });
 	const [recent, augmentedSystemPrompt] = await Promise.all([
 		loadRecent(chatId, 50),
 		buildSystemPromptWithMemory(text),
@@ -175,10 +202,24 @@ export async function handleUserMessage(args: {
 	if (pendingEdit) clearTimeout(pendingEdit);
 	await flush(true);
 
+	// Persist every new message produced this turn (assistant text, tool calls, tool results) — skip
+	// the user message which we already inserted above.
+	const fresh = agent.state.messages.slice(history.length);
+	for (const m of fresh) {
+		if (m.role === "user") continue; // already persisted
+		await insertMessage({
+			chatId,
+			role: rowRoleFor(m),
+			content: summarizeForRow(m),
+			rawMessage: m,
+			...(m.role === "toolResult" && "toolCallId" in m && typeof m.toolCallId === "string"
+				? { toolCallId: m.toolCallId }
+				: {}),
+		});
+	}
+
 	const final = collectAssistantText(agent.state.messages, history.length);
-	if (final) {
-		await insertMessage({ chatId, role: "assistant", content: final });
-	} else if (placeholderId === null) {
+	if (!final && placeholderId === null) {
 		await reply.send("(no response)");
 	}
 }

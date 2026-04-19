@@ -12,6 +12,7 @@ export interface MessageRow {
 	tool_calls: unknown;
 	tool_call_id: string | null;
 	token_count: number | null;
+	raw_message: unknown;
 	created_at: Date;
 }
 
@@ -26,18 +27,29 @@ export interface InsertMessage {
 	toolCalls?: unknown;
 	toolCallId?: string;
 	tokenCount?: number;
+	rawMessage?: unknown;
 }
 
 export async function insertMessage(m: InsertMessage): Promise<MessageRow> {
 	const res = await query<MessageRow>(
-		`insert into messages (chat_id, role, content, tool_calls, tool_call_id, token_count)
-		 values ($1, $2, $3, $4, $5, $6)
+		`insert into messages (chat_id, role, content, tool_calls, tool_call_id, token_count, raw_message)
+		 values ($1, $2, $3, $4, $5, $6, $7)
 		 returning *`,
-		[m.chatId, m.role, m.content, m.toolCalls ?? null, m.toolCallId ?? null, m.tokenCount ?? null],
+		[
+			m.chatId,
+			m.role,
+			m.content,
+			m.toolCalls ? JSON.stringify(m.toolCalls) : null,
+			m.toolCallId ?? null,
+			m.tokenCount ?? null,
+			m.rawMessage ? JSON.stringify(m.rawMessage) : null,
+		],
 	);
 	const row = res.rows[0];
 	if (!row) throw new Error("insertMessage returned no row");
-	void embedMessageInBackground(row.id, m.content);
+	if (m.role === "user" || m.role === "assistant") {
+		void embedMessageInBackground(row.id, m.content);
+	}
 	return row;
 }
 
