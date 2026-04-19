@@ -4,14 +4,14 @@ import { chooseModel, listModels } from "./router.ts";
 describe("chooseModel", () => {
 	it("returns the configured reasoning model", () => {
 		const m = chooseModel("reasoning", "sk-test");
-		expect(m.id).toBe("anthropic/claude-opus-4");
+		expect(m.id).toBe("moonshotai/kimi-k2-thinking");
 		expect(m.api).toBe("openai-completions");
 		expect(m.baseUrl).toBe("https://openrouter.ai/api/v1");
 	});
 
 	it("returns the configured fast model", () => {
 		const m = chooseModel("fast", "sk-test");
-		expect(m.id).toBe("anthropic/claude-haiku-4.5");
+		expect(m.id).toBe("moonshotai/kimi-k2.5");
 	});
 
 	it("returns the configured cheap model", () => {
@@ -21,7 +21,7 @@ describe("chooseModel", () => {
 
 	it("supports fallback via preferIndex", () => {
 		const m = chooseModel("reasoning", "sk-test", { preferIndex: 1 });
-		expect(m.id).toBe("anthropic/claude-sonnet-4");
+		expect(m.id).toBe("anthropic/claude-opus-4");
 	});
 
 	it("clamps preferIndex to the last available model", () => {

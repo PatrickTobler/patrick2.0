@@ -14,12 +14,12 @@ const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
 const MODELS: Record<ModelClass, ModelEntry[]> = {
 	reasoning: [
+		{ id: "moonshotai/kimi-k2-thinking", contextWindow: 262_144, maxTokens: 8192, cost: { input: 0.6, output: 2.5 } },
 		{ id: "anthropic/claude-opus-4", contextWindow: 200_000, maxTokens: 8192, cost: { input: 15, output: 75 } },
-		{ id: "anthropic/claude-sonnet-4", contextWindow: 200_000, maxTokens: 8192, cost: { input: 3, output: 15 } },
 	],
 	fast: [
+		{ id: "moonshotai/kimi-k2.5", contextWindow: 262_144, maxTokens: 8192, cost: { input: 0.38, output: 1.72 } },
 		{ id: "anthropic/claude-haiku-4.5", contextWindow: 200_000, maxTokens: 8192, cost: { input: 1, output: 5 } },
-		{ id: "openai/gpt-4o-mini", contextWindow: 128_000, maxTokens: 16_384, cost: { input: 0.15, output: 0.6 } },
 	],
 	cheap: [
 		{ id: "google/gemini-2.5-flash", contextWindow: 1_000_000, maxTokens: 8192, cost: { input: 0.075, output: 0.3 } },
