@@ -1,14 +1,17 @@
 import { Agent, type AgentEvent, type AgentMessage, type AgentTool } from "@mariozechner/pi-agent-core";
 import type { Message } from "@mariozechner/pi-ai";
 import { getConfig } from "../config.ts";
+import { insertPendingAction, resolveAction } from "../db/repos/actions.ts";
 import { type MessageRow, type Role, insertMessage, loadRecent } from "../db/repos/messages.ts";
 import { chooseModel } from "../llm/router.ts";
 import { log } from "../log.ts";
 import { ingestFactsFromMessage } from "./facts.ts";
 import { buildSystemPromptWithMemory } from "./memory-context.ts";
+import { actionTools } from "./tools/actions.ts";
 import { factTools } from "./tools/facts.ts";
 import { mcpMetaTools } from "./tools/mcp-meta.ts";
 import { skillTools } from "./tools/skills.ts";
+import { thinkingTools } from "./tools/thinking.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: tool schema generic erased at runtime
 let mcpTools: AgentTool<any>[] = [];
@@ -66,16 +69,49 @@ export async function handleUserMessage(args: {
 	]);
 	const history: AgentMessage[] = recent.map(rowToAgentMessage);
 
+	// Track in-flight action rows so afterToolCall can resolve them
+	const pendingActionByToolCallId = new Map<string, number>();
+
 	const agent = new Agent({
 		initialState: {
 			systemPrompt: augmentedSystemPrompt,
 			model: chooseModel("fast", cfg.openrouterApiKey),
 			thinkingLevel: "off",
-			tools: [...factTools, ...skillTools, ...mcpMetaTools, ...mcpTools],
+			tools: [...factTools, ...thinkingTools, ...skillTools, ...actionTools, ...mcpMetaTools, ...mcpTools],
 			messages: history,
 		},
 		convertToLlm: (messages) => messages as Message[],
 		getApiKey: () => cfg.openrouterApiKey,
+		beforeToolCall: async ({ toolCall, args }) => {
+			try {
+				const row = await insertPendingAction({ tool: toolCall.name, input: args });
+				pendingActionByToolCallId.set(toolCall.id, row.id);
+			} catch (err) {
+				log.warn({ err, tool: toolCall.name }, "action history insert failed");
+			}
+			return undefined;
+		},
+		afterToolCall: async ({ toolCall, result, isError }) => {
+			const actionId = pendingActionByToolCallId.get(toolCall.id);
+			if (actionId == null) return undefined;
+			pendingActionByToolCallId.delete(toolCall.id);
+			try {
+				const summary = result.content
+					.filter((c) => c.type === "text")
+					.map((c) => (c as { type: "text"; text: string }).text)
+					.join("\n")
+					.slice(0, 2000);
+				await resolveAction(
+					actionId,
+					isError ? "errored" : "accepted",
+					{ summary, details: result.details },
+					isError ? summary.slice(0, 500) : undefined,
+				);
+			} catch (err) {
+				log.warn({ err, actionId }, "action history resolve failed");
+			}
+			return undefined;
+		},
 	});
 
 	void ingestFactsFromMessage(text);
