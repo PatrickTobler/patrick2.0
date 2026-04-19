@@ -8,7 +8,9 @@ import { log } from "../log.ts";
 import { ingestFactsFromMessage } from "./facts.ts";
 import { buildSystemPromptWithMemory } from "./memory-context.ts";
 import { actionTools } from "./tools/actions.ts";
+import { calendarTools } from "./tools/calendar.ts";
 import { factTools } from "./tools/facts.ts";
+import { gmailTools } from "./tools/gmail.ts";
 import { mcpMetaTools } from "./tools/mcp-meta.ts";
 import { skillTools } from "./tools/skills.ts";
 import { thinkingTools } from "./tools/thinking.ts";
@@ -86,6 +88,8 @@ export async function handleUserMessage(args: {
 				...todoTools,
 				...timeTools,
 				...vaultTools,
+				...calendarTools,
+				...gmailTools,
 				...skillTools,
 				...actionTools,
 				...mcpMetaTools,
