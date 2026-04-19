@@ -25,7 +25,7 @@ export interface McpServer {
 
 const LOCAL_CONFIG_PATH = join(homedir(), ".claude.json");
 
-/** Built-in cloud-friendly MCP servers — HTTP transport, env-token-driven, no local binaries. */
+/** Built-in cloud-friendly MCP servers. HTTP where possible, npx-stdio where required. */
 function builtinCloudServers(): McpServer[] {
 	const servers: McpServer[] = [];
 
@@ -47,6 +47,29 @@ function builtinCloudServers(): McpServer[] {
 				type: "http",
 				url: "https://api.dune.com/mcp/v1",
 				headers: { "x-dune-api-key": process.env.DUNE_API_KEY },
+			},
+		});
+	}
+
+	// Fetch — no auth needed, lets the bot read any URL
+	servers.push({
+		name: "fetch",
+		config: {
+			type: "stdio",
+			command: "npx",
+			args: ["-y", "@kazuph/mcp-fetch"],
+			env: {},
+		},
+	});
+
+	if (process.env.LINEAR_API_KEY) {
+		servers.push({
+			name: "linear",
+			config: {
+				type: "stdio",
+				command: "npx",
+				args: ["-y", "@tacticlaunch/mcp-linear"],
+				env: { LINEAR_API_KEY: process.env.LINEAR_API_KEY },
 			},
 		});
 	}

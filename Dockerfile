@@ -16,6 +16,12 @@ FROM node:22-alpine
 WORKDIR /app
 ENV NODE_ENV=production
 
+# Pre-install npx-launched MCP servers so first call is fast (avoid 30s cold start)
+RUN npm install -g \
+    @kazuph/mcp-fetch@latest \
+    @tacticlaunch/mcp-linear@latest \
+    || true
+
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY package.json ./
