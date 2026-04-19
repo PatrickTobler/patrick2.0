@@ -25,7 +25,7 @@ export interface McpServer {
 
 const LOCAL_CONFIG_PATH = join(homedir(), ".claude.json");
 
-/** Built-in cloud-friendly MCP servers — pure npx-installable, env-token-driven. */
+/** Built-in cloud-friendly MCP servers — HTTP transport, env-token-driven, no local binaries. */
 function builtinCloudServers(): McpServer[] {
 	const servers: McpServer[] = [];
 
@@ -33,22 +33,9 @@ function builtinCloudServers(): McpServer[] {
 		servers.push({
 			name: "github",
 			config: {
-				type: "stdio",
-				command: "npx",
-				args: ["-y", "@modelcontextprotocol/server-github"],
-				env: { GITHUB_PERSONAL_ACCESS_TOKEN: process.env.GITHUB_TOKEN },
-			},
-		});
-	}
-
-	if (process.env.RAILWAY_TOKEN) {
-		servers.push({
-			name: "railway",
-			config: {
-				type: "stdio",
-				command: "npx",
-				args: ["-y", "@railway/mcp-server"],
-				env: { RAILWAY_TOKEN: process.env.RAILWAY_TOKEN },
+				type: "http",
+				url: "https://api.githubcopilot.com/mcp/",
+				headers: { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` },
 			},
 		});
 	}
@@ -57,10 +44,9 @@ function builtinCloudServers(): McpServer[] {
 		servers.push({
 			name: "dune",
 			config: {
-				type: "stdio",
-				command: "npx",
-				args: ["-y", "@duneanalytics/mcp"],
-				env: { DUNE_API_KEY: process.env.DUNE_API_KEY },
+				type: "http",
+				url: "https://api.dune.com/mcp/v1",
+				headers: { "x-dune-api-key": process.env.DUNE_API_KEY },
 			},
 		});
 	}
