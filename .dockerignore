@@ -1,0 +1,14 @@
+node_modules
+dist
+.env
+.env.local
+.git
+.github
+.vscode
+*.log
+.DS_Store
+coverage
+.vitest-cache
+test
+SPECS.md
+README.md

@@ -1,0 +1,43 @@
+{
+	"name": "patrick2.0",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"description": "Personal assistant agent — digital clone of Patrick.",
+	"scripts": {
+		"dev": "tsx watch src/index.ts",
+		"start": "node --enable-source-maps dist/index.js",
+		"build": "tsc -p tsconfig.build.json",
+		"typecheck": "tsc --noEmit",
+		"lint": "biome check .",
+		"format": "biome format --write .",
+		"check": "biome check . && tsc --noEmit",
+		"test": "vitest run",
+		"test:watch": "vitest",
+		"migrate:up": "node-pg-migrate up -d DATABASE_URL --migrations-dir migrations",
+		"migrate:down": "node-pg-migrate down -d DATABASE_URL --migrations-dir migrations"
+	},
+	"dependencies": {
+		"@mariozechner/pi-agent-core": "^0.67.68",
+		"@mariozechner/pi-ai": "^0.67.68",
+		"@modelcontextprotocol/sdk": "^1.29.0",
+		"dotenv": "^16.4.5",
+		"grammy": "^1.30.0",
+		"node-cron": "^3.0.3",
+		"node-pg-migrate": "^7.6.0",
+		"pg": "^8.13.0",
+		"pino": "^9.5.0",
+		"yaml": "^2.8.3"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^1.9.4",
+		"@types/node": "^22.7.0",
+		"@types/pg": "^8.11.10",
+		"tsx": "^4.19.0",
+		"typescript": "^5.6.0",
+		"vitest": "^2.1.0"
+	},
+	"engines": {
+		"node": ">=22"
+	}
+}
