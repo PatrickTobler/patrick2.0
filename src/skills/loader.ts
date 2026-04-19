@@ -129,9 +129,12 @@ function scanDir(dir: string, source: string, warnings: string[], depth = 0): Sk
 
 function scanAllDirs(): SkillsLoad {
 	const dirs: { path: string; source: string }[] = [
+		// Bundled skills baked into the Docker image — primary source on Railway
+		{ path: resolve(process.cwd(), "skills"), source: "bundled" },
+		{ path: resolve(process.cwd(), ".pi", "skills"), source: "project" },
+		// User-global directories — only present when running on Patrick's Mac
 		{ path: join(homedir(), ".pi", "agent", "skills"), source: "pi-user" },
 		{ path: join(homedir(), ".claude", "skills"), source: "claude-user" },
-		{ path: resolve(process.cwd(), ".pi", "skills"), source: "project" },
 	];
 	const warnings: string[] = [];
 	const seen = new Map<string, Skill>();

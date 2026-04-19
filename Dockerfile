@@ -25,10 +25,14 @@ RUN npm install -g \
     @tacticlaunch/mcp-linear@latest \
     || true
 
+# Bash for the wise_query.sh helper bundled in skills/wise-bank/
+RUN apk add --no-cache bash
+
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY package.json ./
 COPY migrations ./migrations
+COPY skills ./skills
 
 # Run migrations then start
 CMD node node_modules/node-pg-migrate/bin/node-pg-migrate up -d DATABASE_URL --migrations-dir migrations \
