@@ -1,7 +1,7 @@
 import "@mariozechner/pi-ai";
 import type { Model } from "@mariozechner/pi-ai";
 
-export type ModelClass = "reasoning" | "fast" | "cheap";
+export type ModelClass = "reasoning" | "fast" | "cheap" | "coding";
 
 interface ModelEntry {
 	id: string;
@@ -24,6 +24,10 @@ const MODELS: Record<ModelClass, ModelEntry[]> = {
 	cheap: [
 		{ id: "google/gemini-2.5-flash", contextWindow: 1_000_000, maxTokens: 8192, cost: { input: 0.075, output: 0.3 } },
 		{ id: "openai/gpt-4o-mini", contextWindow: 128_000, maxTokens: 16_384, cost: { input: 0.15, output: 0.6 } },
+	],
+	coding: [
+		{ id: "qwen/qwen3-coder-plus", contextWindow: 1_000_000, maxTokens: 8192, cost: { input: 0.65, output: 3.25 } },
+		{ id: "anthropic/claude-sonnet-4.6", contextWindow: 1_000_000, maxTokens: 8192, cost: { input: 3, output: 15 } },
 	],
 };
 

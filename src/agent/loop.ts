@@ -7,6 +7,8 @@ import { chooseModel } from "../llm/router.ts";
 import { log } from "../log.ts";
 import { ingestFactsFromMessage } from "./facts.ts";
 import { buildSystemPromptWithMemory } from "./memory-context.ts";
+import { makeCoderSubagentTool } from "./subagents/coder.ts";
+import { makeResearcherSubagentTool } from "./subagents/researcher.ts";
 import { actionTools } from "./tools/actions.ts";
 import { calendarTools } from "./tools/calendar.ts";
 import { factTools } from "./tools/facts.ts";
@@ -93,6 +95,8 @@ export async function handleUserMessage(args: {
 				...skillTools,
 				...actionTools,
 				...mcpMetaTools,
+				makeCoderSubagentTool(() => mcpTools),
+				makeResearcherSubagentTool(() => mcpTools),
 				...mcpTools,
 			],
 			messages: history,
