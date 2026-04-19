@@ -16,6 +16,9 @@ FROM node:22-alpine
 WORKDIR /app
 ENV NODE_ENV=production
 
+# git for the Obsidian vault sync
+RUN apk add --no-cache git ca-certificates
+
 # Pre-install npx-launched MCP servers so first call is fast (avoid 30s cold start)
 RUN npm install -g \
     @kazuph/mcp-fetch@latest \

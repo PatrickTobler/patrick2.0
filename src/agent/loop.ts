@@ -14,6 +14,7 @@ import { skillTools } from "./tools/skills.ts";
 import { thinkingTools } from "./tools/thinking.ts";
 import { timeTools } from "./tools/time.ts";
 import { todoTools } from "./tools/todos.ts";
+import { vaultTools } from "./tools/vault.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: tool schema generic erased at runtime
 let mcpTools: AgentTool<any>[] = [];
@@ -84,6 +85,7 @@ export async function handleUserMessage(args: {
 				...thinkingTools,
 				...todoTools,
 				...timeTools,
+				...vaultTools,
 				...skillTools,
 				...actionTools,
 				...mcpMetaTools,
