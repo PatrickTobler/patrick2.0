@@ -12,6 +12,8 @@ import { factTools } from "./tools/facts.ts";
 import { mcpMetaTools } from "./tools/mcp-meta.ts";
 import { skillTools } from "./tools/skills.ts";
 import { thinkingTools } from "./tools/thinking.ts";
+import { timeTools } from "./tools/time.ts";
+import { todoTools } from "./tools/todos.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: tool schema generic erased at runtime
 let mcpTools: AgentTool<any>[] = [];
@@ -77,7 +79,16 @@ export async function handleUserMessage(args: {
 			systemPrompt: augmentedSystemPrompt,
 			model: chooseModel("fast", cfg.openrouterApiKey),
 			thinkingLevel: "off",
-			tools: [...factTools, ...thinkingTools, ...skillTools, ...actionTools, ...mcpMetaTools, ...mcpTools],
+			tools: [
+				...factTools,
+				...thinkingTools,
+				...todoTools,
+				...timeTools,
+				...skillTools,
+				...actionTools,
+				...mcpMetaTools,
+				...mcpTools,
+			],
 			messages: history,
 		},
 		convertToLlm: (messages) => messages as Message[],
