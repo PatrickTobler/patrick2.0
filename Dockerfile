@@ -28,6 +28,15 @@ RUN npm install -g \
 # Bash for the wise_query.sh helper bundled in skills/wise-bank/
 RUN apk add --no-cache bash
 
+# Masumi Agent Messenger CLI (for the masumi-agent-messenger skill)
+RUN npm install -g @masumi_network/masumi-agent-messenger@latest || true
+
+# The CLI stores credentials under $HOME/.config. Point HOME at the Railway
+# volume so auth state persists across deploys.
+ENV HOME=/data/home
+ENV XDG_CONFIG_HOME=/data/home/.config
+ENV XDG_DATA_HOME=/data/home/.local/share
+
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY package.json ./
