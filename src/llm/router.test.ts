@@ -11,7 +11,7 @@ describe("chooseModel", () => {
 
 	it("returns the configured fast model", () => {
 		const m = chooseModel("fast", "sk-test");
-		expect(m.id).toBe("moonshotai/kimi-k2.5");
+		expect(m.id).toBe("xiaomi/mimo-v2-pro");
 	});
 
 	it("returns the configured cheap model", () => {
