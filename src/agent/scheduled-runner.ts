@@ -13,6 +13,7 @@ import { calendarTools } from "./tools/calendar.ts";
 import { factTools } from "./tools/facts.ts";
 import { gmailTools } from "./tools/gmail.ts";
 import { mcpMetaTools } from "./tools/mcp-meta.ts";
+import { shellTools } from "./tools/shell.ts";
 import { skillTools } from "./tools/skills.ts";
 import { telegramTools } from "./tools/telegram.ts";
 import { thinkingTools } from "./tools/thinking.ts";
@@ -68,6 +69,7 @@ export async function runScheduledPrompt(scheduleId: number, prompt: string): Pr
 				...calendarTools,
 				...gmailTools,
 				...telegramTools,
+				...shellTools,
 				...skillTools,
 				...actionTools,
 				...mcpMetaTools,
