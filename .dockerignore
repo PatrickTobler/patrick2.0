@@ -12,4 +12,5 @@ coverage
 test
 SPECS.md
 README.md
-scripts
+# Include scripts/masumi-bootstrap.sh; exclude TS-only OAuth helper
+scripts/google-oauth.ts
