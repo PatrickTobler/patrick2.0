@@ -1,8 +1,10 @@
 import { handleUserMessage, setMcpTools } from "./agent/loop.ts";
+import { setMcpToolsForScheduled } from "./agent/scheduled-runner.ts";
 import { getConfig } from "./config.ts";
 import { closePool } from "./db/pool.ts";
 import { log } from "./log.ts";
 import { startMcpBridge, stopMcpBridge } from "./mcp/bridge.ts";
+import { reloadAllSchedules, stopAllSchedules } from "./scheduler/service.ts";
 import { createBot } from "./telegram/bot.ts";
 
 async function main(): Promise<void> {
@@ -14,10 +16,19 @@ async function main(): Promise<void> {
 		try {
 			const tools = await startMcpBridge();
 			setMcpTools(tools);
+			setMcpToolsForScheduled(tools);
 		} catch (err) {
 			log.error({ err }, "MCP bridge boot failed");
 		}
 	})();
+
+	// Boot scheduler — load all enabled schedules from DB and register cron jobs
+	try {
+		const count = await reloadAllSchedules();
+		log.info({ count }, "scheduler ready");
+	} catch (err) {
+		log.error({ err }, "scheduler boot failed");
+	}
 
 	const handle = createBot(async (ctx) => {
 		await handleUserMessage({
@@ -32,6 +43,7 @@ async function main(): Promise<void> {
 
 	const shutdown = async (signal: string) => {
 		log.info({ signal }, "shutting down");
+		stopAllSchedules();
 		await handle.stop().catch(() => {});
 		await stopMcpBridge().catch(() => {});
 		await closePool().catch(() => {});

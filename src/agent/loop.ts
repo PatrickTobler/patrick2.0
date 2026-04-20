@@ -14,6 +14,7 @@ import { calendarTools } from "./tools/calendar.ts";
 import { factTools } from "./tools/facts.ts";
 import { gmailTools } from "./tools/gmail.ts";
 import { mcpMetaTools } from "./tools/mcp-meta.ts";
+import { scheduleTools } from "./tools/schedules.ts";
 import { skillTools } from "./tools/skills.ts";
 import { thinkingTools } from "./tools/thinking.ts";
 import { timeTools } from "./tools/time.ts";
@@ -119,6 +120,7 @@ export async function handleUserMessage(args: {
 				...vaultTools,
 				...calendarTools,
 				...gmailTools,
+				...scheduleTools,
 				...skillTools,
 				...actionTools,
 				...mcpMetaTools,
