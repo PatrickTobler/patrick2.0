@@ -2,6 +2,7 @@ import { recallFacts } from "../db/repos/facts.ts";
 import { searchHistory } from "../db/repos/messages.ts";
 import { recallThinking } from "../db/repos/thinking.ts";
 import { loadAllSkills } from "../skills/loader.ts";
+import { loadProfile } from "../vault/profile.ts";
 import { SYSTEM_PROMPT } from "./system-prompt.ts";
 
 const MAX_FACTS = 8;
@@ -12,13 +13,18 @@ const THINKING_SIM_THRESHOLD = 0.35;
 const HISTORY_SIM_THRESHOLD = 0.4;
 
 export async function buildSystemPromptWithMemory(userText: string): Promise<string> {
-	const [facts, thinking, history] = await Promise.all([
+	const [facts, thinking, history, profile] = await Promise.all([
 		recallFacts(userText, MAX_FACTS),
 		recallThinking(userText, MAX_THINKING),
 		searchHistory(userText, MAX_HISTORY),
+		loadProfile(),
 	]);
 
 	const sections: string[] = [SYSTEM_PROMPT];
+
+	if (profile && profile.trim().length > 0) {
+		sections.push(`## Core profile (always-in-context; rebuilt weekly by consolidation)\n\n${profile.trim()}`);
+	}
 
 	const { skills } = loadAllSkills();
 	const exposedSkills = skills.filter((s) => !s.disableModelInvocation);
