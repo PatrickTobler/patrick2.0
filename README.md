@@ -8,7 +8,171 @@ Specs are in [`SPECS.md`](./SPECS.md). This README is the architecture reference
 
 ---
 
-## High-level architecture
+## Architecture
+
+### System diagram
+
+```mermaid
+flowchart TB
+    U[Patrick] -->|Telegram| TG[Telegram Bot API]
+    MM[Masumi Network] -->|encrypted threads| MM_CLI
+    MAC[Patrick's Mac<br/>Obsidian + Obsidian Git plugin] <-->|git sync 5 min| VAULT_REPO
+
+    subgraph RW[Railway service: patrick2-app]
+        direction TB
+        GRAM[grammy bot<br/>allowlisted chat_id]
+        SCHED[node-cron scheduler<br/>reloaded on CRUD]
+        AGENT["pi-agent-core Agent loop<br/>fast: MiMo V2 Pro<br/>reasoning: Kimi K2-Thinking<br/>coding: Qwen3-Coder Plus"]
+        HOOKS[beforeToolCall / afterToolCall<br/>persistence + action history]
+        TOOLS[Tool registry]
+        MCP_BR[MCP bridge<br/>stdio + HTTP transports]
+        MM_CLI[masumi-agent-messenger CLI<br/>/data/home config]
+        VAULT_FS[Obsidian vault<br/>/data/vault<br/>git pull before read<br/>git commit+push after write]
+    end
+
+    TG <--> GRAM
+    GRAM --> AGENT
+    SCHED --> AGENT
+    AGENT <--> HOOKS
+    HOOKS --> DB
+    AGENT --> TOOLS
+    TOOLS --> MCP_BR
+    TOOLS --> MM_CLI
+    TOOLS --> VAULT_FS
+    VAULT_FS <-->|HTTPS push/pull| VAULT_REPO
+
+    AGENT -->|chat + embeddings| OR[OpenRouter]
+    OR -->|Kimi / MiMo / Qwen / Claude| LLM[LLM providers]
+
+    TOOLS -->|HTTPS| GH[GitHub MCP]
+    TOOLS -->|HTTPS| LIN[Linear MCP]
+    TOOLS -->|HTTPS| DUNE[Dune MCP]
+    TOOLS -->|stdio| FET[fetch MCP]
+    TOOLS -->|OAuth refresh| GCAL[Google Calendar API]
+    TOOLS -->|OAuth refresh| GM[Gmail API]
+
+    DB[(Postgres + pgvector<br/>messages / facts / thinking /<br/>actions / todos / schedules / kv)]
+    VAULT_REPO[(github.com/PatrickTobler/<br/>patrick-vault private repo)]
+    MM_CLI -->|OAuth| MM
+```
+
+### Inbound Telegram message lifecycle
+
+```mermaid
+sequenceDiagram
+    actor P as Patrick (Telegram)
+    participant G as grammy
+    participant L as handleUserMessage
+    participant DB as Postgres
+    participant M as Memory context
+    participant A as pi Agent
+    participant T as Tools
+    participant O as OpenRouter
+
+    P->>G: message "do X"
+    G->>G: drop if chat_id != ALLOWED
+    G->>L: dispatch
+    L->>DB: insertMessage(user + raw_message)
+    par background
+        L->>DB: embed message
+        L->>A: ingestFactsFromMessage (LLM extract + upsert)
+    end
+    L->>M: recall top facts + thinking + history
+    M->>DB: pgvector similarity queries
+    L->>A: new Agent(system=SYSTEM+memory, tools=all)
+    loop until stop
+        A->>O: chat completion w/ tools
+        O-->>A: text delta / tool call
+        opt text_delta
+            A-->>G: stream edit Telegram message (debounced 600ms)
+        end
+        opt tool call
+            A->>T: execute tool
+            T->>DB: insertPendingAction
+            T-->>A: AgentToolResult
+            T->>DB: resolveAction
+        end
+    end
+    L->>DB: persist every new AgentMessage (assistant + tool calls + tool results)
+```
+
+### Scheduled prompt lifecycle
+
+```mermaid
+sequenceDiagram
+    participant C as node-cron tick
+    participant S as scheduler/service
+    participant R as runScheduledPrompt
+    participant M as Memory context
+    participant A as pi Agent (no auto-stream)
+    participant T as Tools (incl. send_telegram_message)
+    participant DB as Postgres
+
+    C->>S: fire (cron match in TZ)
+    S->>DB: load schedule row by id
+    S->>R: runScheduledPrompt(id, prompt)
+    R->>M: recall memory for prompt
+    R->>A: new Agent(system=memory+SCHEDULED_BANNER, tools=all)
+    Note over A: Agent knows it's autonomous.<br/>Silence is valid.<br/>Must explicitly call send_telegram_message.
+    loop until stop
+        A->>T: tool calls (memory, gmail, linear, shell, ...)
+        T->>DB: actions logged as cron:<id>:<tool>
+        A->>A: decide: ping or stay silent
+        opt decided to ping
+            A->>T: send_telegram_message(text)
+            T-->>Patrick: new Telegram message (fresh, not in-thread)
+        end
+    end
+    R->>DB: markFired(id)
+```
+
+### Memory write + recall path
+
+```mermaid
+flowchart LR
+    MSG[User message]
+    MSG --> PERSIST[insertMessage]
+    MSG --> BG_FACTS[Background: extractFacts via LLM]
+    MSG --> BG_EMBED[Background: embed for history search]
+
+    BG_FACTS --> UPSERT{Near-duplicate?<br/>cosine ≥ 0.85}
+    UPSERT -- yes, bump confidence --> FACTS_TABLE[(memory_facts)]
+    UPSERT -- yes, longer text --> REPLACE[Replace text, keep id]
+    UPSERT -- no --> FACTS_TABLE
+
+    BG_EMBED --> MSG_VEC[(messages.embedding)]
+    PERSIST --> MSG_ROW[(messages.raw_message jsonb)]
+
+    NEW_TURN[Next turn starts] --> RECALL[buildSystemPromptWithMemory]
+    RECALL -->|top 8 cosine ≥ 0.30| FACTS_TABLE
+    RECALL -->|top 4 cosine ≥ 0.35| THINKING_TABLE[(memory_thinking)]
+    RECALL -->|top 3 cosine ≥ 0.40 user msgs| MSG_VEC
+    RECALL --> PROMPT[Assembled system prompt]
+
+    EXPLICIT[store_thinking etc.] --> FACTS_TABLE
+    EXPLICIT --> THINKING_TABLE
+    TOOL_CALLS[Every tool call] -->|beforeToolCall / afterToolCall| ACTIONS[(memory_actions)]
+```
+
+### Vault (Obsidian) sync lifecycle
+
+```mermaid
+flowchart LR
+    PATRICK[Patrick edits note<br/>in Obsidian on Mac]
+    PATRICK -->|Obsidian Git plugin<br/>auto-commit every 5 min| VAULT_REPO
+
+    VAULT_REPO[(GitHub<br/>patrick-vault)] -->|git pull --rebase<br/>before any read| VAULT_FS
+    VAULT_FS[/data/vault<br/>Railway volume] -->|read_note / search_notes| AGENT[Agent]
+
+    AGENT -->|write_note / append_note| VAULT_FS
+    VAULT_FS -->|git add + commit + push<br/>after every write| VAULT_REPO
+
+    VAULT_REPO -->|git pull every 5 min<br/>in Obsidian Git plugin| PATRICK
+```
+
+---
+
+## ASCII box diagram (if Mermaid doesn't render)
 
 ```
 ┌─────────────┐     long-poll        ┌────────────────────────────────────────┐
