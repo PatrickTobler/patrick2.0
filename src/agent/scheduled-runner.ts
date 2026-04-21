@@ -18,7 +18,7 @@ import { skillTools } from "./tools/skills.ts";
 import { telegramTools } from "./tools/telegram.ts";
 import { thinkingTools } from "./tools/thinking.ts";
 import { timeTools } from "./tools/time.ts";
-import { todoTools } from "./tools/todos.ts";
+// Native todos disabled — Patrick uses Linear (via MCP) instead.
 import { vaultTools } from "./tools/vault.ts";
 
 const SCHEDULED_BANNER = `
@@ -63,7 +63,6 @@ export async function runScheduledPrompt(scheduleId: number, prompt: string): Pr
 			tools: [
 				...factTools,
 				...thinkingTools,
-				...todoTools,
 				...timeTools,
 				...vaultTools,
 				...calendarTools,

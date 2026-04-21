@@ -19,7 +19,8 @@ import { shellTools } from "./tools/shell.ts";
 import { skillTools } from "./tools/skills.ts";
 import { thinkingTools } from "./tools/thinking.ts";
 import { timeTools } from "./tools/time.ts";
-import { todoTools } from "./tools/todos.ts";
+// Native todos disabled — Patrick uses Linear instead. Keep the table for historical data;
+// re-add `todoTools` here if we ever want them back.
 import { vaultTools } from "./tools/vault.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: tool schema generic erased at runtime
@@ -116,7 +117,6 @@ export async function handleUserMessage(args: {
 			tools: [
 				...factTools,
 				...thinkingTools,
-				...todoTools,
 				...timeTools,
 				...vaultTools,
 				...calendarTools,
