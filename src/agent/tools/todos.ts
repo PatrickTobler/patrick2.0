@@ -46,20 +46,26 @@ const ListSchema = Type.Object({
 	due_within_hours: Type.Optional(
 		Type.Number({ description: "Only todos due within N hours (or with no due date).", minimum: 1, maximum: 8760 }),
 	),
-	limit: Type.Optional(Type.Number({ description: "Max todos.", minimum: 1, maximum: 200, default: 50 })),
+	search: Type.Optional(
+		Type.String({ description: "Case-insensitive substring filter over todo text.", maxLength: 200 }),
+	),
+	limit: Type.Optional(Type.Number({ description: "Max todos.", minimum: 1, maximum: 500, default: 50 })),
+	offset: Type.Optional(Type.Number({ description: "Pagination offset.", minimum: 0, default: 0 })),
 });
 
 export const listTodosTool: AgentTool<typeof ListSchema> = {
 	name: "list_todos",
 	label: "List todos",
 	description:
-		"List Patrick's open todos (newest due first). Filter by 'due within N hours' for 'what's on my plate today'. Set include_completed=true for an audit of recent done items.",
+		"List todos with optional filters. 'what's on my plate today' → due_within_hours=24. 'find my work-related todos' → search='work'. include_completed=true for audits.",
 	parameters: ListSchema,
 	execute: async (_id, params: Static<typeof ListSchema>) => {
 		const rows = await listTodos({
 			includeCompleted: params.include_completed ?? false,
 			...(params.due_within_hours != null ? { dueWithinHours: params.due_within_hours } : {}),
+			...(params.search ? { search: params.search } : {}),
 			limit: params.limit ?? 50,
+			offset: params.offset ?? 0,
 		});
 		if (rows.length === 0) {
 			return { content: [{ type: "text", text: "No matching todos." }], details: { count: 0 } };

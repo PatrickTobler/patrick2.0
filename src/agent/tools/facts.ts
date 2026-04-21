@@ -27,21 +27,46 @@ export const rememberFactTool: AgentTool<typeof RememberSchema> = {
 };
 
 const ListSchema = Type.Object({
-	limit: Type.Optional(Type.Number({ description: "Max facts to return.", minimum: 1, maximum: 100, default: 20 })),
+	limit: Type.Optional(Type.Number({ description: "Max facts to return.", minimum: 1, maximum: 500, default: 50 })),
+	offset: Type.Optional(
+		Type.Number({ description: "Pagination offset (for audits of large fact stores).", minimum: 0, default: 0 }),
+	),
+	search: Type.Optional(
+		Type.String({
+			description: "Case-insensitive substring filter over fact text. E.g. 'work' finds facts mentioning work.",
+			maxLength: 200,
+		}),
+	),
+	min_confidence: Type.Optional(
+		Type.Number({
+			description: "Only facts with confidence >= this. Use 2.0+ to filter to reinforced facts.",
+			minimum: 0,
+			maximum: 5,
+		}),
+	),
+	since_days: Type.Optional(
+		Type.Number({ description: "Only facts updated in the last N days. 7 = last week.", minimum: 1, maximum: 365 }),
+	),
 });
 
 export const listFactsTool: AgentTool<typeof ListSchema> = {
 	name: "list_facts",
 	label: "List stored facts",
 	description:
-		"List facts currently stored about Patrick. Use when Patrick asks 'what do you know about me?' or wants to review/audit memory.",
+		"List facts stored about Patrick with optional filters (search, min_confidence, since_days) and pagination. Use for 'what do you know about me', audits, or exploring the memory. Combine filters to narrow down: search='work' + min_confidence=2 surfaces reinforced work-related facts.",
 	parameters: ListSchema,
-	execute: async (_id, { limit }: Static<typeof ListSchema>) => {
-		const facts = await listFacts(limit ?? 20);
+	execute: async (_id, params: Static<typeof ListSchema>) => {
+		const facts = await listFacts({
+			limit: params.limit ?? 50,
+			offset: params.offset ?? 0,
+			...(params.search ? { search: params.search } : {}),
+			...(params.min_confidence != null ? { minConfidence: params.min_confidence } : {}),
+			...(params.since_days != null ? { sinceDays: params.since_days } : {}),
+		});
 		if (facts.length === 0) {
-			return { content: [{ type: "text", text: "No facts stored yet." }], details: { facts: [] } };
+			return { content: [{ type: "text", text: "No facts match." }], details: { facts: [] } };
 		}
-		const lines = facts.map((f) => `${f.id}. ${f.text}`);
+		const lines = facts.map((f) => `${f.id}. (c${f.confidence.toFixed(1)}) ${f.text}`);
 		return {
 			content: [{ type: "text", text: lines.join("\n") }],
 			details: { facts: facts.map((f) => ({ id: f.id, text: f.text, confidence: f.confidence })) },

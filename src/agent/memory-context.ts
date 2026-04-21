@@ -1,6 +1,8 @@
-import { recallFacts } from "../db/repos/facts.ts";
-import { searchHistory } from "../db/repos/messages.ts";
-import { recallThinking } from "../db/repos/thinking.ts";
+import { type RecalledFact, recallFacts } from "../db/repos/facts.ts";
+import { type SearchedMessage, searchHistory } from "../db/repos/messages.ts";
+import { type RecalledThinking, recallThinking } from "../db/repos/thinking.ts";
+import { rerankByRelevance } from "../llm/rerank.ts";
+import { log } from "../log.ts";
 import { loadAllSkills } from "../skills/loader.ts";
 import { loadProfile } from "../vault/profile.ts";
 import { SYSTEM_PROMPT } from "./system-prompt.ts";
@@ -8,15 +10,48 @@ import { SYSTEM_PROMPT } from "./system-prompt.ts";
 const MAX_FACTS = 8;
 const MAX_THINKING = 4;
 const MAX_HISTORY = 3;
+
+// Over-fetch factor: retrieve N× the target K from hybrid search, then re-rank to top K
+// Only kicks in when the pool is large enough to matter (≥ RERANK_THRESHOLD).
+const OVERFETCH_FACTOR = 3;
+const RERANK_THRESHOLD = 15;
+
 const FACT_SIM_THRESHOLD = 0.3;
 const THINKING_SIM_THRESHOLD = 0.35;
 const HISTORY_SIM_THRESHOLD = 0.4;
 
+async function recallAndRerank<T extends RecalledFact | RecalledThinking | SearchedMessage>(
+	query: string,
+	fetcher: (q: string, limit: number) => Promise<T[]>,
+	targetK: number,
+	label: string,
+): Promise<T[]> {
+	const overfetch = targetK * OVERFETCH_FACTOR;
+	const candidates = await fetcher(query, overfetch);
+	if (candidates.length <= RERANK_THRESHOLD) return candidates.slice(0, targetK);
+
+	try {
+		const reranked = await rerankByRelevance(
+			query,
+			candidates.map((c) => ({
+				id: c.id,
+				text: (c as { text?: string; content?: string }).text ?? (c as { content?: string }).content ?? "",
+				_src: c,
+			})),
+			targetK,
+		);
+		return reranked.map((r) => (r as { _src: T })._src);
+	} catch (err) {
+		log.warn({ err, label }, "rerank failed, falling back to hybrid order");
+		return candidates.slice(0, targetK);
+	}
+}
+
 export async function buildSystemPromptWithMemory(userText: string): Promise<string> {
 	const [facts, thinking, history, profile] = await Promise.all([
-		recallFacts(userText, MAX_FACTS),
-		recallThinking(userText, MAX_THINKING),
-		searchHistory(userText, MAX_HISTORY),
+		recallAndRerank(userText, recallFacts, MAX_FACTS, "facts"),
+		recallAndRerank(userText, recallThinking, MAX_THINKING, "thinking"),
+		recallAndRerank(userText, searchHistory, MAX_HISTORY, "history"),
 		loadProfile(),
 	]);
 

@@ -22,10 +22,12 @@ export interface ListFilter {
 	includeCompleted?: boolean;
 	dueWithinHours?: number;
 	limit?: number;
+	offset?: number;
+	search?: string;
 }
 
 export async function listTodos(filter: ListFilter = {}): Promise<TodoRow[]> {
-	const { includeCompleted = false, dueWithinHours, limit = 100 } = filter;
+	const { includeCompleted = false, dueWithinHours, limit = 100, offset = 0, search } = filter;
 	const conditions: string[] = [];
 	const params: unknown[] = [];
 	let i = 1;
@@ -34,9 +36,13 @@ export async function listTodos(filter: ListFilter = {}): Promise<TodoRow[]> {
 		conditions.push(`(due_at is null or due_at <= now() + ($${i++} || ' hours')::interval)`);
 		params.push(String(dueWithinHours));
 	}
+	if (search?.trim()) {
+		conditions.push(`text ilike $${i++}`);
+		params.push(`%${search.trim()}%`);
+	}
 	const where = conditions.length ? `where ${conditions.join(" and ")}` : "";
-	params.push(limit);
-	const sql = `select * from todos ${where} order by completed_at nulls first, due_at nulls last, created_at limit $${i}`;
+	params.push(limit, offset);
+	const sql = `select * from todos ${where} order by completed_at nulls first, due_at nulls last, created_at limit $${i++} offset $${i}`;
 	const res = await query<TodoRow>(sql, params);
 	return res.rows;
 }

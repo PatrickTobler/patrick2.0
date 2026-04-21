@@ -1,6 +1,6 @@
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { type Static, Type } from "@mariozechner/pi-ai";
-import { insertThinking, listRecentThinking, listThinkingByTopic, recallThinking } from "../../db/repos/thinking.ts";
+import { insertThinking, listThinking, recallThinking } from "../../db/repos/thinking.ts";
 
 const StoreSchema = Type.Object({
 	text: Type.String({
@@ -69,20 +69,33 @@ const ListSchema = Type.Object({
 	topic: Type.Optional(
 		Type.String({ description: "Filter by exact topic tag (lowercase). Omit for recent across all.", maxLength: 40 }),
 	),
-	limit: Type.Optional(Type.Number({ description: "Max results.", minimum: 1, maximum: 50, default: 20 })),
+	search: Type.Optional(
+		Type.String({ description: "Case-insensitive substring filter over thinking text.", maxLength: 200 }),
+	),
+	since_days: Type.Optional(
+		Type.Number({ description: "Only thoughts from the last N days.", minimum: 1, maximum: 365 }),
+	),
+	limit: Type.Optional(Type.Number({ description: "Max results.", minimum: 1, maximum: 200, default: 30 })),
+	offset: Type.Optional(Type.Number({ description: "Pagination offset.", minimum: 0, default: 0 })),
 });
 
 export const listThinkingTool: AgentTool<typeof ListSchema> = {
 	name: "list_thinking",
-	label: "List recent thinking",
+	label: "List thinking",
 	description:
-		"List recent thinking dumps (newest first), optionally filtered by topic tag. Use when Patrick wants to review what he's been chewing on.",
+		"List thinking dumps (newest first) with optional filters and pagination. Use for 'what have I been thinking about X' or wide audits.",
 	parameters: ListSchema,
-	execute: async (_id, { topic, limit }: Static<typeof ListSchema>) => {
-		const rows = topic ? await listThinkingByTopic(topic, limit ?? 20) : await listRecentThinking(limit ?? 20);
+	execute: async (_id, params: Static<typeof ListSchema>) => {
+		const rows = await listThinking({
+			limit: params.limit ?? 30,
+			offset: params.offset ?? 0,
+			...(params.topic ? { topic: params.topic } : {}),
+			...(params.search ? { search: params.search } : {}),
+			...(params.since_days != null ? { sinceDays: params.since_days } : {}),
+		});
 		if (rows.length === 0) {
 			return {
-				content: [{ type: "text", text: topic ? `No thinking on '${topic}'.` : "No thinking yet." }],
+				content: [{ type: "text", text: "No thinking matches." }],
 				details: { results: [] },
 			};
 		}
