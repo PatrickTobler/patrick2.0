@@ -3,6 +3,7 @@ import { setMcpToolsForScheduled } from "./agent/scheduled-runner.ts";
 import { getConfig } from "./config.ts";
 import { closePool } from "./db/pool.ts";
 import { log } from "./log.ts";
+import { startFactDecayJob, stopFactDecayJob } from "./maintenance/decay.ts";
 import { startMasumiTokenRefresher, stopMasumiTokenRefresher } from "./masumi/auth-refresher.ts";
 import { startMcpBridge, stopMcpBridge } from "./mcp/bridge.ts";
 import { reloadAllSchedules, stopAllSchedules } from "./scheduler/service.ts";
@@ -35,6 +36,9 @@ async function main(): Promise<void> {
 	// the OAuth token on an interval (45 min) and write it back to the CLI's secrets store.
 	startMasumiTokenRefresher();
 
+	// Daily fact decay — keeps the recall pool weighted toward fresh + reinforced.
+	startFactDecayJob();
+
 	const handle = createBot(async (ctx) => {
 		await handleUserMessage({
 			chatId: ctx.chatId,
@@ -50,6 +54,7 @@ async function main(): Promise<void> {
 		log.info({ signal }, "shutting down");
 		stopAllSchedules();
 		stopMasumiTokenRefresher();
+		stopFactDecayJob();
 		await handle.stop().catch(() => {});
 		await stopMcpBridge().catch(() => {});
 		await closePool().catch(() => {});

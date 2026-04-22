@@ -5,13 +5,23 @@ import { upsertFact } from "../db/repos/facts.ts";
 import { chooseModel } from "../llm/router.ts";
 import { log } from "../log.ts";
 
-const EXTRACTION_PROMPT = `Extract stable, durable facts about Patrick from the message below. Only return facts that are likely to remain true for months — preferences, relationships, habits, recurring contexts, settled opinions.
+const EXTRACTION_PROMPT = `Extract HIGH-SIGNAL stable facts about Patrick from the message below. Be ruthlessly conservative — most messages contain ZERO new facts worth keeping.
+
+Only return facts that pass ALL these tests:
+1. Likely to remain true for 6+ months (settled, not in flux)
+2. Specific (not generic platitudes; "Patrick uses Linear" — too generic. "Patrick triages Linear weekly on Friday afternoons" — specific.)
+3. Non-obvious (not derivable from the bot's setup or generic Patrick knowledge — skip "Patrick uses Telegram", "Patrick has a vault", "Patrick has scheduled prompts")
+4. New (you must be ≥80% sure this isn't already known)
+5. About Patrick himself (not about the bot, the schedule, masumi network, etc.)
 
 Skip:
-- Ephemeral state ("I'm tired today", "I just had coffee")
-- Evolving thinking or in-progress positions (those go to thinking dumps, not facts)
+- Ephemeral state ("I'm tired today", "I just had coffee", "I'm working on X this week")
+- Evolving thinking or in-progress positions (those go to thinking dumps via store_thinking)
+- Operational/bot facts ("Patrick has a morning brief schedule", "Patrick uses masumi-agent-messenger CLI")
+- Restatements of things mentioned in the prompt itself (a scheduled prompt mentioning "check my emails" doesn't make "Patrick checks emails" a fact)
 - Anything trivial or one-off
-- Facts already obvious from being Patrick (e.g. "Patrick uses Telegram")
+
+Hard limit: MAX 3 facts per message. If unsure, return fewer or zero.
 
 Return STRICT JSON: {"facts": ["fact 1", "fact 2"]}. Each fact written in third person about Patrick. Empty array if nothing qualifies. NO other text.`;
 

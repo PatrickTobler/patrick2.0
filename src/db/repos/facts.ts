@@ -54,7 +54,12 @@ export async function upsertFact(text: string, source: string | null): Promise<F
 	return row;
 }
 
-/** Hybrid recall: cosine similarity + BM25 text rank, weighted. */
+/** Hybrid recall: cosine similarity + BM25 text rank, weighted by confidence.
+ *
+ * Final score = (cosine * 0.7 + bm25 * 0.3) * (0.5 + confidence/5).
+ * Confidence multiplier ranges 0.5x (decayed) to 1.5x (max-reinforced).
+ * Net effect: at scale, fresh+reinforced facts surface first; stale+low-conf facts fade.
+ */
 export async function recallFacts(queryText: string, limit = 5): Promise<RecalledFact[]> {
 	const vec = await embed(queryText);
 	if (!vec) return [];
@@ -62,8 +67,9 @@ export async function recallFacts(queryText: string, limit = 5): Promise<Recalle
 		`select *,
 		        (1 - (embedding <=> $1::vector)) as cosine_sim,
 		        ts_rank(tsv, plainto_tsquery('english', $2)) as text_rank,
-		        (1 - (embedding <=> $1::vector)) * $3
-		          + coalesce(ts_rank(tsv, plainto_tsquery('english', $2)), 0) * $4
+		        ((1 - (embedding <=> $1::vector)) * $3
+		          + coalesce(ts_rank(tsv, plainto_tsquery('english', $2)), 0) * $4)
+		          * (0.5 + least(confidence, 5.0) / 5.0)
 		          as hybrid_score
 		 from memory_facts
 		 where embedding is not null
@@ -72,6 +78,30 @@ export async function recallFacts(queryText: string, limit = 5): Promise<Recalle
 		[vectorLiteral(vec), queryText, COSINE_WEIGHT, BM25_WEIGHT, limit],
 	);
 	return res.rows.map((row) => ({ ...row, similarity: row.cosine_sim }));
+}
+
+/** Daily maintenance: decay confidence on facts not reinforced in N days, prune below floor. */
+export async function decayFacts(
+	opts: { daysSinceUpdate?: number; multiplier?: number; minConfidence?: number } = {},
+): Promise<{
+	decayed: number;
+	pruned: number;
+}> {
+	const days = opts.daysSinceUpdate ?? 7;
+	const mult = opts.multiplier ?? 0.95;
+	const floor = opts.minConfidence ?? 0.2;
+
+	const decayed = await query<{ id: number }>(
+		`update memory_facts
+		 set confidence = greatest(confidence * $1, 0)
+		 where updated_at < now() - ($2 || ' days')::interval
+		 returning id`,
+		[mult, String(days)],
+	);
+
+	const pruned = await query<{ id: number }>("delete from memory_facts where confidence < $1 returning id", [floor]);
+
+	return { decayed: decayed.rowCount ?? 0, pruned: pruned.rowCount ?? 0 };
 }
 
 export interface ListFactsFilter {
