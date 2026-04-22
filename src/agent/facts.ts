@@ -71,7 +71,24 @@ function parseJsonLoose(s: string): unknown {
 	}
 }
 
+/** Quick filter — skip the LLM call for messages that obviously contain no extractable facts. */
+function isLikelyNoFact(text: string): boolean {
+	const trimmed = text.trim();
+	// Too short to carry signal
+	if (trimmed.length < 30) return true;
+	// Common conversational filler / acknowledgements
+	const lower = trimmed.toLowerCase();
+	const fillerPatterns = [
+		/^(ok|okay|cool|nice|great|thanks|thank you|thx|ty|yes|no|sure|alright|alrighty|fine|yep|nope|got it|kk)[!.\s]*$/,
+		/^(send|send it|send that|do it|do that|go|go ahead|approve|approved)[!.\s]*$/,
+		/^\?\?+$/,
+		/^[\s\d.,!?]+$/, // pure punctuation/numbers
+	];
+	return fillerPatterns.some((re) => re.test(lower));
+}
+
 export async function ingestFactsFromMessage(text: string): Promise<number> {
+	if (isLikelyNoFact(text)) return 0;
 	try {
 		const facts = await extractFacts(text);
 		if (facts.length === 0) return 0;

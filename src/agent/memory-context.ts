@@ -13,7 +13,7 @@ const MAX_HISTORY = 3;
 
 // Over-fetch factor: retrieve N× the target K from hybrid search, then re-rank to top K
 // Only kicks in when the pool is large enough to matter (≥ RERANK_THRESHOLD).
-const OVERFETCH_FACTOR = 3;
+const OVERFETCH_FACTOR = 2;
 const RERANK_THRESHOLD = 15;
 
 const FACT_SIM_THRESHOLD = 0.3;
@@ -47,11 +47,19 @@ async function recallAndRerank<T extends RecalledFact | RecalledThinking | Searc
 	}
 }
 
-export async function buildSystemPromptWithMemory(userText: string): Promise<string> {
+export interface MemoryContextOptions {
+	/** Message ids already in the rolling conversation window — exclude from history recall. */
+	excludeMessageIds?: number[];
+}
+
+export async function buildSystemPromptWithMemory(userText: string, opts: MemoryContextOptions = {}): Promise<string> {
+	const excludeIds = opts.excludeMessageIds ?? [];
+	const historyFetcher = (q: string, limit: number) => searchHistory(q, limit, { excludeIds });
+
 	const [facts, thinking, history, profile] = await Promise.all([
 		recallAndRerank(userText, recallFacts, MAX_FACTS, "facts"),
 		recallAndRerank(userText, recallThinking, MAX_THINKING, "thinking"),
-		recallAndRerank(userText, searchHistory, MAX_HISTORY, "history"),
+		recallAndRerank(userText, historyFetcher, MAX_HISTORY, "history"),
 		loadProfile(),
 	]);
 

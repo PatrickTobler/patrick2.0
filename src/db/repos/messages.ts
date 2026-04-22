@@ -74,9 +74,22 @@ export async function loadRecent(chatId: number, limit = 50): Promise<MessageRow
 const COSINE_WEIGHT = 0.7;
 const BM25_WEIGHT = 0.3;
 
-export async function searchHistory(queryText: string, limit = 5): Promise<SearchedMessage[]> {
+export interface SearchHistoryOptions {
+	/** Exclude messages with these ids (e.g. ones already in the rolling conversation window). */
+	excludeIds?: number[];
+}
+
+export async function searchHistory(
+	queryText: string,
+	limit = 5,
+	opts: SearchHistoryOptions = {},
+): Promise<SearchedMessage[]> {
 	const vec = await embed(queryText);
 	if (!vec) return [];
+	const excludeIds = opts.excludeIds ?? [];
+	const excludeClause = excludeIds.length > 0 ? "and id <> all($6::bigint[])" : "";
+	const params: unknown[] = [vectorLiteral(vec), queryText, COSINE_WEIGHT, BM25_WEIGHT, limit];
+	if (excludeIds.length > 0) params.push(excludeIds);
 	const res = await query<MessageRow & { cosine_sim: number; hybrid_score: number }>(
 		`select *,
 		        (1 - (embedding <=> $1::vector)) as cosine_sim,
@@ -85,10 +98,10 @@ export async function searchHistory(queryText: string, limit = 5): Promise<Searc
 		          + coalesce(ts_rank(tsv, plainto_tsquery('english', $2)), 0) * $4
 		          as hybrid_score
 		 from messages
-		 where embedding is not null
+		 where embedding is not null ${excludeClause}
 		 order by hybrid_score desc
 		 limit $5`,
-		[vectorLiteral(vec), queryText, COSINE_WEIGHT, BM25_WEIGHT, limit],
+		params,
 	);
 	return res.rows.map((row) => ({ ...row, similarity: row.cosine_sim }));
 }

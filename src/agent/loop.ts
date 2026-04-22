@@ -100,10 +100,9 @@ export async function handleUserMessage(args: {
 		timestamp: Date.now(),
 	};
 	await insertMessage({ chatId, role: "user", content: text, rawMessage: userMsg });
-	const [recent, augmentedSystemPrompt] = await Promise.all([
-		loadRecent(chatId, 50),
-		buildSystemPromptWithMemory(text),
-	]);
+	const recent = await loadRecent(chatId, 50);
+	const recentIds = recent.map((r) => r.id);
+	const augmentedSystemPrompt = await buildSystemPromptWithMemory(text, { excludeMessageIds: recentIds });
 	const history: AgentMessage[] = recent.map(rowToAgentMessage);
 
 	// Track in-flight action rows so afterToolCall can resolve them
