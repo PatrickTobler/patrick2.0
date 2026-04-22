@@ -3,6 +3,7 @@ import { setMcpToolsForScheduled } from "./agent/scheduled-runner.ts";
 import { getConfig } from "./config.ts";
 import { closePool } from "./db/pool.ts";
 import { log } from "./log.ts";
+import { startMasumiTokenRefresher, stopMasumiTokenRefresher } from "./masumi/auth-refresher.ts";
 import { startMcpBridge, stopMcpBridge } from "./mcp/bridge.ts";
 import { reloadAllSchedules, stopAllSchedules } from "./scheduler/service.ts";
 import { createBot } from "./telegram/bot.ts";
@@ -30,6 +31,10 @@ async function main(): Promise<void> {
 		log.error({ err }, "scheduler boot failed");
 	}
 
+	// Boot masumi token refresher — the CLI's auto-refresh endpoint is broken; we refresh
+	// the OAuth token on an interval (45 min) and write it back to the CLI's secrets store.
+	startMasumiTokenRefresher();
+
 	const handle = createBot(async (ctx) => {
 		await handleUserMessage({
 			chatId: ctx.chatId,
@@ -44,6 +49,7 @@ async function main(): Promise<void> {
 	const shutdown = async (signal: string) => {
 		log.info({ signal }, "shutting down");
 		stopAllSchedules();
+		stopMasumiTokenRefresher();
 		await handle.stop().catch(() => {});
 		await stopMcpBridge().catch(() => {});
 		await closePool().catch(() => {});
