@@ -18,6 +18,7 @@ const MODELS: Record<ModelClass, ModelEntry[]> = {
 		{ id: "anthropic/claude-opus-4", contextWindow: 200_000, maxTokens: 8192, cost: { input: 15, output: 75 } },
 	],
 	fast: [
+		{ id: "xiaomi/mimo-v2.5-pro", contextWindow: 1_048_576, maxTokens: 8192, cost: { input: 1, output: 3 } },
 		{ id: "xiaomi/mimo-v2-pro", contextWindow: 1_048_576, maxTokens: 8192, cost: { input: 1, output: 3 } },
 		{ id: "moonshotai/kimi-k2.5", contextWindow: 262_144, maxTokens: 8192, cost: { input: 0.38, output: 1.72 } },
 		{ id: "anthropic/claude-haiku-4.5", contextWindow: 200_000, maxTokens: 8192, cost: { input: 1, output: 5 } },

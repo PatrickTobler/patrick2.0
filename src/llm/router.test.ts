@@ -11,7 +11,7 @@ describe("chooseModel", () => {
 
 	it("returns the configured fast model", () => {
 		const m = chooseModel("fast", "sk-test");
-		expect(m.id).toBe("xiaomi/mimo-v2-pro");
+		expect(m.id).toBe("xiaomi/mimo-v2.5-pro");
 	});
 
 	it("returns the configured cheap model", () => {
