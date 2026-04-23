@@ -8,6 +8,13 @@ import { log } from "../log.ts";
 import { ingestFactsFromMessage } from "./facts.ts";
 import { buildSystemPromptWithMemory } from "./memory-context.ts";
 import { makeCoderSubagentTool } from "./subagents/coder.ts";
+import {
+	duneSubagentSpec,
+	githubSubagentSpec,
+	linearSubagentSpec,
+	makeMcpDomainSubagent,
+	webSubagentSpec,
+} from "./subagents/mcp-domain.ts";
 import { makeResearcherSubagentTool } from "./subagents/researcher.ts";
 import { actionTools } from "./tools/actions.ts";
 import { calendarTools } from "./tools/calendar.ts";
@@ -150,9 +157,14 @@ export async function handleUserMessage(args: {
 				...skillTools,
 				...actionTools,
 				...mcpMetaTools,
+				// All MCP access goes through domain-scoped subagents to keep the main agent's
+				// tool schema list tight. Each subagent owns one MCP server's tool surface.
 				makeCoderSubagentTool(() => mcpTools),
 				makeResearcherSubagentTool(() => mcpTools),
-				...mcpTools,
+				makeMcpDomainSubagent(githubSubagentSpec, () => mcpTools),
+				makeMcpDomainSubagent(linearSubagentSpec, () => mcpTools),
+				makeMcpDomainSubagent(duneSubagentSpec, () => mcpTools),
+				makeMcpDomainSubagent(webSubagentSpec, () => mcpTools),
 			],
 			messages: history,
 		},

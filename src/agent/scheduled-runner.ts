@@ -7,6 +7,13 @@ import { log } from "../log.ts";
 import { ingestFactsFromMessage } from "./facts.ts";
 import { buildSystemPromptWithMemory } from "./memory-context.ts";
 import { makeCoderSubagentTool } from "./subagents/coder.ts";
+import {
+	duneSubagentSpec,
+	githubSubagentSpec,
+	linearSubagentSpec,
+	makeMcpDomainSubagent,
+	webSubagentSpec,
+} from "./subagents/mcp-domain.ts";
 import { makeResearcherSubagentTool } from "./subagents/researcher.ts";
 import { actionTools } from "./tools/actions.ts";
 import { calendarTools } from "./tools/calendar.ts";
@@ -72,9 +79,13 @@ export async function runScheduledPrompt(scheduleId: number, prompt: string): Pr
 				...skillTools,
 				...actionTools,
 				...mcpMetaTools,
+				// Same subagent pattern as main agent — keeps scheduled runs light.
 				makeCoderSubagentTool(() => mcpToolsRef),
 				makeResearcherSubagentTool(() => mcpToolsRef),
-				...mcpToolsRef,
+				makeMcpDomainSubagent(githubSubagentSpec, () => mcpToolsRef),
+				makeMcpDomainSubagent(linearSubagentSpec, () => mcpToolsRef),
+				makeMcpDomainSubagent(duneSubagentSpec, () => mcpToolsRef),
+				makeMcpDomainSubagent(webSubagentSpec, () => mcpToolsRef),
 			],
 			messages: [],
 		},
