@@ -38,10 +38,35 @@ export interface ReplyChannel {
 
 const EDIT_DEBOUNCE_MS = 600;
 
+// Tool results routinely include 10-30KB JSON blobs (masumi thread shows, github feeds, etc.).
+// We persist the full text (for audits + action history), but when REHYDRATING into the next
+// turn's conversation context we truncate — the model doesn't need to re-read 30KB of raw JSON
+// it already acted on. Keeps the input window tight.
+const TOOL_RESULT_HISTORY_MAX_CHARS = 800;
+
+function truncateContent(text: string, max: number): string {
+	if (text.length <= max) return text;
+	return `${text.slice(0, max)}\n…(truncated, was ${text.length} chars)`;
+}
+
+function truncateToolMessage(msg: Message): Message {
+	if (msg.role !== "toolResult") return msg;
+	if (!Array.isArray(msg.content)) return msg;
+	// biome-ignore lint/suspicious/noExplicitAny: pi's content union requires a cast here
+	const truncated: any[] = msg.content.map((block) => {
+		const b = block as unknown as { type: string; text?: string };
+		if (b.type === "text" && typeof b.text === "string") {
+			return { ...block, text: truncateContent(b.text, TOOL_RESULT_HISTORY_MAX_CHARS) };
+		}
+		return block;
+	});
+	return { ...msg, content: truncated };
+}
+
 function rowToAgentMessage(row: MessageRow): Message {
 	// Prefer the full serialized AgentMessage if we have it (preserves tool calls + results)
 	if (row.raw_message && typeof row.raw_message === "object") {
-		return row.raw_message as Message;
+		return truncateToolMessage(row.raw_message as Message);
 	}
 	// Legacy rows: synthesize a minimal text-only message
 	if (row.role === "user") {
