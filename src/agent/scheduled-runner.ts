@@ -1,7 +1,7 @@
 import { Agent, type AgentMessage, type AgentTool } from "@mariozechner/pi-agent-core";
 import type { Message } from "@mariozechner/pi-ai";
 import { getConfig } from "../config.ts";
-import { insertPendingAction, resolveAction } from "../db/repos/actions.ts";
+import { type ActionRow, insertPendingAction, listActionsByToolPrefix, resolveAction } from "../db/repos/actions.ts";
 import { chooseModel } from "../llm/router.ts";
 import { log } from "../log.ts";
 import { ingestFactsFromMessage } from "./facts.ts";
@@ -14,6 +14,7 @@ import {
 	makeMcpDomainSubagent,
 	webSubagentSpec,
 } from "./subagents/mcp-domain.ts";
+import { makeMoltbookSubagentTool } from "./subagents/moltbook.ts";
 import { makeResearcherSubagentTool } from "./subagents/researcher.ts";
 import { actionTools } from "./tools/actions.ts";
 import { calendarTools } from "./tools/calendar.ts";
@@ -31,12 +32,30 @@ import { vaultTools } from "./tools/vault.ts";
 const SCHEDULED_BANNER = `
 You are running on a schedule — Patrick did NOT just message you. This is autonomous time.
 
-Rules:
-- The "user" message below is the scheduled prompt. Treat it as instructions, not a conversation.
-- Use any tools you need (memory, calendar, gmail, vault, MCP, subagents, skills) to fulfill it.
-- If — and only if — there's something genuinely worth interrupting Patrick for, call send_telegram_message. Silence is acceptable and often correct.
-- Do NOT call send_telegram_message just to confirm you ran. Patrick can audit via query_actions.
-- Be tight. Match Patrick's tone (terse, direct, plain).
+## Default behavior: silence
+- Do NOT send_telegram_message to confirm you ran. Patrick audits via query_actions.
+- The "user" message below is the scheduled prompt — instructions, not a conversation.
+
+## When you MAY ping Patrick on Telegram (rare)
+Only when ALL three are true:
+1. There's a new, substantive signal (not seen on a previous run of this schedule).
+2. It genuinely needs Patrick's input or awareness — payment requests, security/auth issues, a human asking a question only he can answer, an error blocking the schedule.
+3. You haven't already told him about this thread/topic in a recent run (check the "Previous runs" block — if it's there, do NOT repeat).
+
+If ANY of those fail: stay silent. Repeat-pinging is the failure mode to avoid.
+
+## Masumi Agent Messenger — fully autonomous
+You may read, reply, ack, route, and converse with other agents on the messenger WITHOUT asking Patrick first. Reply directly when:
+- Another agent asks a factual question you can answer from memory/vault/tools.
+- A thread needs an ack, status update, or routine coordination message.
+- The reply is a normal back-and-forth in an ongoing thread.
+
+Only escalate to Patrick when a thread needs a *human decision* (money, commitments on his behalf, ambiguous strategic calls).
+
+If Patrick told you to ignore a thread/sender (check facts + previous runs), do NOT re-surface it.
+
+## Tone
+Terse, direct, plain. No emojis unless mirroring.
 `;
 
 export interface ScheduledRunResult {
@@ -53,10 +72,59 @@ export function setMcpToolsForScheduled(tools: AgentTool<any>[]): void {
 	mcpToolsRef = tools;
 }
 
+// How many prior runs of this schedule to surface as context. The model needs enough history
+// to recognise "I already pinged Patrick about this" or "I already replied to that masumi thread"
+// without bloating the prompt. ~25 actions ≈ a few full runs.
+const PRIOR_ACTIONS_LIMIT = 25;
+
+function formatPriorRuns(scheduleId: number, actions: ActionRow[]): string {
+	if (actions.length === 0) return "";
+	const lines = actions
+		.slice()
+		.reverse() // oldest → newest reads more naturally
+		.map((a) => {
+			const ts = a.created_at.toISOString().replace("T", " ").slice(0, 16);
+			const tool = a.tool.replace(`cron:${scheduleId}:`, "");
+			const inputStr = (() => {
+				try {
+					const s = typeof a.input === "string" ? a.input : JSON.stringify(a.input);
+					return s.length > 240 ? `${s.slice(0, 240)}…` : s;
+				} catch {
+					return "";
+				}
+			})();
+			const outSummary = (() => {
+				if (!a.output || typeof a.output !== "object") return "";
+				const summary = (a.output as { summary?: string }).summary;
+				if (typeof summary !== "string") return "";
+				const trimmed = summary.replace(/\s+/g, " ").trim();
+				return trimmed.length > 240 ? `${trimmed.slice(0, 240)}…` : trimmed;
+			})();
+			const errPart = a.error ? ` ERROR: ${a.error.slice(0, 160)}` : "";
+			const outPart = outSummary ? ` → ${outSummary}` : "";
+			return `- ${ts} ${tool}(${inputStr})${outPart}${errPart}`;
+		});
+	return [
+		"## Previous runs of this schedule (most recent last)",
+		"This is what you did on prior firings. Use it to avoid repeating yourself — especially do NOT re-ping Patrick about something already in this list.",
+		"",
+		lines.join("\n"),
+	].join("\n");
+}
+
 export async function runScheduledPrompt(scheduleId: number, prompt: string): Promise<ScheduledRunResult> {
 	const cfg = getConfig();
 	const augmentedSystemPrompt = await buildSystemPromptWithMemory(prompt);
-	const systemPrompt = `${augmentedSystemPrompt}\n\n${SCHEDULED_BANNER}`;
+	let priorRunsBlock = "";
+	try {
+		const prior = await listActionsByToolPrefix(`cron:${scheduleId}:`, PRIOR_ACTIONS_LIMIT);
+		priorRunsBlock = formatPriorRuns(scheduleId, prior);
+	} catch (err) {
+		log.warn({ err, scheduleId }, "scheduled prior-runs load failed");
+	}
+	const systemPrompt = [augmentedSystemPrompt, priorRunsBlock, SCHEDULED_BANNER]
+		.filter((s) => s && s.trim().length > 0)
+		.join("\n\n");
 
 	const pendingActionByToolCallId = new Map<string, number>();
 	let telegramSent = false;
@@ -86,6 +154,7 @@ export async function runScheduledPrompt(scheduleId: number, prompt: string): Pr
 				makeMcpDomainSubagent(linearSubagentSpec, () => mcpToolsRef),
 				makeMcpDomainSubagent(duneSubagentSpec, () => mcpToolsRef),
 				makeMcpDomainSubagent(webSubagentSpec, () => mcpToolsRef),
+				makeMoltbookSubagentTool(),
 			],
 			messages: [],
 		},

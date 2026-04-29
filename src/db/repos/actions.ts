@@ -57,3 +57,11 @@ export async function listActionsByTool(tool: string, limit = 50): Promise<Actio
 	]);
 	return res.rows;
 }
+
+export async function listActionsByToolPrefix(prefix: string, limit = 50): Promise<ActionRow[]> {
+	const res = await query<ActionRow>(
+		"select * from memory_actions where tool like $1 order by created_at desc limit $2",
+		[`${prefix}%`, limit],
+	);
+	return res.rows;
+}
