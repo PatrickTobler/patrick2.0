@@ -6,7 +6,7 @@ import { type MessageRow, type Role, insertMessage, loadRecent } from "../db/rep
 import { chooseModel } from "../llm/router.ts";
 import { log } from "../log.ts";
 import { ingestFactsFromMessage } from "./facts.ts";
-import { buildSystemPromptWithMemory } from "./memory-context.ts";
+import { buildRecallContext, buildStableSystemPrompt, withRecall } from "./memory-context.ts";
 import { makeCoderSubagentTool } from "./subagents/coder.ts";
 import {
 	duneSubagentSpec,
@@ -128,15 +128,28 @@ export async function handleUserMessage(args: {
 	const cfg = getConfig();
 	const { chatId, text, reply } = args;
 
+	const recent = await loadRecent(chatId, 50);
+	const recentIds = recent.map((r) => r.id);
+
+	// Cache-aware split: stable prompt as the system prefix (identity + profile + skills index),
+	// per-turn recall (facts/thinking/history) prepended to the user message instead. This keeps
+	// the system prompt bytewise identical across turns so Anthropic's prompt cache stays warm,
+	// while still grounding the model with relevance-selected memory.
+	const [stableSystemPrompt, recall] = await Promise.all([
+		buildStableSystemPrompt(),
+		buildRecallContext(text, { excludeMessageIds: recentIds }),
+	]);
+	const promptedText = withRecall(text, recall);
+
+	// We persist the augmented version in raw_message so next-turn rehydration produces the
+	// exact same bytes the model already saw — preserving cache validity on the conversation
+	// history too. The `content` column stays as the raw user text for clean search/audits.
 	const userMsg: AgentMessage = {
 		role: "user",
-		content: [{ type: "text", text }],
+		content: [{ type: "text", text: promptedText }],
 		timestamp: Date.now(),
 	};
 	await insertMessage({ chatId, role: "user", content: text, rawMessage: userMsg });
-	const recent = await loadRecent(chatId, 50);
-	const recentIds = recent.map((r) => r.id);
-	const augmentedSystemPrompt = await buildSystemPromptWithMemory(text, { excludeMessageIds: recentIds });
 	const history: AgentMessage[] = recent.map(rowToAgentMessage);
 
 	// Track in-flight action rows so afterToolCall can resolve them
@@ -144,7 +157,7 @@ export async function handleUserMessage(args: {
 
 	const agent = new Agent({
 		initialState: {
-			systemPrompt: augmentedSystemPrompt,
+			systemPrompt: stableSystemPrompt,
 			model: chooseModel("fast", cfg.openrouterApiKey),
 			thinkingLevel: "off",
 			tools: [
@@ -241,7 +254,9 @@ export async function handleUserMessage(args: {
 		}
 	});
 
-	await agent.prompt(text);
+	// Pass the recall-augmented text to the agent so the model sees the same content
+	// we stored in raw_message — keeps wire/disk in sync for next-turn cache hits.
+	await agent.prompt(promptedText);
 	await agent.waitForIdle();
 	if (pendingEdit) clearTimeout(pendingEdit);
 	await flush(true);

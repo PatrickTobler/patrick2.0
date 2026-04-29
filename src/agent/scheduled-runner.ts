@@ -5,7 +5,7 @@ import { type ActionRow, insertPendingAction, listActionsByToolPrefix, resolveAc
 import { chooseModel } from "../llm/router.ts";
 import { log } from "../log.ts";
 import { ingestFactsFromMessage } from "./facts.ts";
-import { buildSystemPromptWithMemory } from "./memory-context.ts";
+import { buildRecallContext, buildStableSystemPrompt } from "./memory-context.ts";
 import { makeCoderSubagentTool } from "./subagents/coder.ts";
 import {
 	duneSubagentSpec,
@@ -114,7 +114,13 @@ function formatPriorRuns(scheduleId: number, actions: ActionRow[]): string {
 
 export async function runScheduledPrompt(scheduleId: number, prompt: string): Promise<ScheduledRunResult> {
 	const cfg = getConfig();
-	const augmentedSystemPrompt = await buildSystemPromptWithMemory(prompt);
+
+	// Same cache-aware split as the live chat loop: identity + profile + skills + banner are
+	// stable per cron tick, while recall and the (per-tick-fresh) prior-runs block ride along
+	// in the user prompt instead of mutating the system prefix.
+	const [stableSystemPrompt, recall] = await Promise.all([buildStableSystemPrompt(), buildRecallContext(prompt)]);
+	const systemPrompt = `${stableSystemPrompt}\n\n${SCHEDULED_BANNER}`;
+
 	let priorRunsBlock = "";
 	try {
 		const prior = await listActionsByToolPrefix(`cron:${scheduleId}:`, PRIOR_ACTIONS_LIMIT);
@@ -122,9 +128,8 @@ export async function runScheduledPrompt(scheduleId: number, prompt: string): Pr
 	} catch (err) {
 		log.warn({ err, scheduleId }, "scheduled prior-runs load failed");
 	}
-	const systemPrompt = [augmentedSystemPrompt, priorRunsBlock, SCHEDULED_BANNER]
-		.filter((s) => s && s.trim().length > 0)
-		.join("\n\n");
+
+	const promptedText = [recall, priorRunsBlock, prompt].filter((s) => s && s.trim().length > 0).join("\n\n");
 
 	const pendingActionByToolCallId = new Map<string, number>();
 	let telegramSent = false;
@@ -197,9 +202,11 @@ export async function runScheduledPrompt(scheduleId: number, prompt: string): Pr
 		},
 	});
 
+	// Ingest the raw scheduled prompt (not the augmented one) — recall/prior-runs are
+	// retrieval artefacts, not facts about Patrick.
 	void ingestFactsFromMessage(prompt);
 
-	await agent.prompt(prompt);
+	await agent.prompt(promptedText);
 	await agent.waitForIdle();
 
 	const finalText = collectAssistantText(agent.state.messages);
