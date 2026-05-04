@@ -22,7 +22,7 @@ flowchart TB
         direction TB
         GRAM[grammy bot<br/>allowlisted chat_id]
         SCHED[node-cron scheduler<br/>reloaded on CRUD]
-        AGENT["pi-agent-core Agent loop<br/>fast: MiMo V2 Pro<br/>reasoning: Kimi K2-Thinking<br/>coding: Qwen3-Coder Plus"]
+        AGENT["pi-agent-core Agent loop<br/>fast: MiMo V2.5 Pro<br/>reasoning: Kimi K2-Thinking<br/>coding: Qwen3-Coder Plus"]
         HOOKS[beforeToolCall / afterToolCall<br/>persistence + action history]
         TOOLS[Tool registry]
         MCP_BR[MCP bridge<br/>stdio + HTTP transports]
@@ -183,7 +183,7 @@ flowchart LR
                                      │  │  (badlogic/pi-mono framework)    │  │
                                      │  │                                  │  │
                                      │  │  - LLM router → OpenRouter       │  │
-                                     │  │    fast: Kimi K2.5               │  │
+                                     │  │    fast: MiMo V2.5 Pro           │  │
                                      │  │    reasoning: Kimi K2-Thinking   │  │
                                      │  │    coding: Qwen3-Coder Plus      │  │
                                      │  │  - Tool registry                 │  │
@@ -197,17 +197,19 @@ flowchart LR
                                      │  │  Tools surfaced to the model     │  │
                                      │  │                                  │  │
                                      │  │  • Memory:  facts, thinking,     │  │
-                                     │  │             todos, time, actions │  │
+                                     │  │             time, actions        │  │
                                      │  │  • Vault:   list/read/write/     │  │
                                      │  │             search/append        │  │
                                      │  │  • Google:  Calendar (3),        │  │
                                      │  │             Gmail (4)            │  │
+                                     │  │  • Schedules: add/list/update/   │  │
+                                     │  │             pause/resume/delete  │  │
+                                     │  │  • Shell:   run_shell            │  │
                                      │  │  • Skills:  list/read/reload     │  │
-                                     │  │             (29 bundled)         │  │
-                                     │  │  • MCP:     104 tools across     │  │
-                                     │  │             github, linear,      │  │
-                                     │  │             dune, fetch          │  │
-                                     │  │  • Subagents: coder, researcher  │  │
+                                     │  │             (12 bundled)         │  │
+                                     │  │  • Subagents (8): coder,         │  │
+                                     │  │     researcher, github, linear,  │  │
+                                     │  │     dune, web, moltbook, reddit  │  │
                                      │  └──────────────────────────────────┘  │
                                      │                                        │
                                      │  ┌──────────────────────────────────┐  │
@@ -292,12 +294,13 @@ Everything in Postgres. Embeddings are 1536-dim from `openai/text-embedding-3-sm
 
 | Table | Purpose | Recall |
 |---|---|---|
-| `messages` | Every Telegram turn (user + assistant) | Semantic search via embedding column |
-| `memory_facts` | Stable truths about Patrick | Cosine top-K, dedupe at sim ≥ 0.85 (longer phrasing wins) |
+| `messages` | Every Telegram turn (user + assistant) | Semantic search via embedding column (HNSW index) + tsvector hybrid |
+| `memory_facts` | Stable truths about Patrick | Cosine top-K (HNSW), dedupe at sim ≥ 0.85 (longer phrasing wins), confidence-weighted with daily decay |
 | `memory_thinking` | Evolving positions, in-progress reasoning | Semantic top-K + topic tag filter |
 | `memory_actions` | Every tool call: input, output, outcome | By tool, by outcome, by time |
 | `notes` | Free-form notes (currently unused — vault is preferred) | n/a |
-| `todos` | Native task store | Open / due-within-N-hours / completed |
+| `todos` | Native task store (currently disabled — Patrick uses Linear; table kept for historical data) | n/a |
+| `schedules` | Cron schedules for proactive prompts | Loaded at boot + reloaded on CRUD via tools |
 | `kv` | Generic key-value (config, state) | Direct |
 
 **Critical distinction enforced in the system prompt:** facts are stable, thinking is evolving. "I prefer async" → fact. "I'm starting to think the right play is X because Y" → thinking.
@@ -310,14 +313,13 @@ Everything in Postgres. Embeddings are 1536-dim from `openai/text-embedding-3-sm
 
 ## Tools surfaced to the model
 
-Total surface: ~140 tools at any given turn. The pi Agent receives all of them in every LLM call (their JSON schemas burn ~40-50k input tokens — acceptable on Kimi K2.5's 262k context, with possible progressive disclosure later).
+Total surface for the main reactive agent: **~31 native tools + 8 subagents = ~39 tool schemas** in every LLM call. MCP servers (~100+ tools across github/linear/dune/fetch) are no longer surfaced raw — they're scoped behind domain subagents so the main agent's prompt stays tight. Bundled skill *names + descriptions* are listed in the system prompt; full SKILL.md content loads on demand via `read_skill`.
 
 ### Native (built in this repo)
 | Tool | Group | What |
 |---|---|---|
-| `remember_fact`, `list_facts`, `forget_fact` | Memory | Stable facts about Patrick |
+| `remember_fact`, `list_facts`, `forget_fact` | Memory | Stable facts about Patrick (confidence-weighted, daily decay) |
 | `store_thinking`, `recall_thinking`, `list_thinking` | Memory | Evolving positions |
-| `add_todo`, `list_todos`, `complete_todo`, `snooze_todo`, `delete_todo` | Memory | Native todos |
 | `current_time` | Time | Now in Patrick's tz, for resolving "tomorrow" → ISO |
 | `query_actions` | Memory | Audit tool history |
 | `list_skills`, `read_skill`, `reload_skills` | Skills | Discover + load skill files |
@@ -325,40 +327,55 @@ Total surface: ~140 tools at any given turn. The pi Agent receives all of them i
 | `list_notes`, `read_note`, `search_notes`, `write_note`, `append_note` | Vault | Read/write Obsidian via git sync |
 | `list_events`, `create_event`, `delete_event` | Google Calendar | Direct API via OAuth refresh |
 | `list_emails`, `read_email`, `draft_email`, `send_draft` | Gmail | Drafts always require explicit Patrick approval |
-| `delegate_to_coder`, `delegate_to_researcher` | Subagents | Spawn focused sub-Agents |
+| `add_schedule`, `list_schedules`, `update_schedule`, `pause_schedule`, `resume_schedule`, `delete_schedule` | Schedules | Cron-style proactive prompts; service auto-reloads on CRUD |
+| `run_shell` | Shell | Sandboxed `execFile` (not a real shell — args stay separate, env passes through) |
+| `delegate_to_coder`, `delegate_to_researcher`, `delegate_to_github`, `delegate_to_linear`, `delegate_to_dune`, `delegate_to_web`, `delegate_to_moltbook`, `delegate_to_reddit` | Subagents | Spawn focused sub-Agents (see table below) |
+
+> Native todo tools (`add_todo`, etc.) are **disabled** — Patrick uses Linear via the linear subagent. Code path is intact, table is kept; re-enable by adding `todoTools` back in `src/agent/loop.ts`.
+
+> The scheduled-prompt runner additionally exposes `send_telegram_message` and `send_telegram_photo` so cron-fired agents can ping Patrick proactively. These are not on the reactive path (a reactive reply just streams into the existing chat).
 
 ### Skills (bundled in `./skills/`, loaded via Agent Skills standard)
 Progressive disclosure: only `name + description` are in the system prompt; the agent calls `read_skill` to load full SKILL.md content on demand.
 
-| Bundled (11) | Purpose |
+| Bundled (12) | Purpose |
 |---|---|
 | `ads-google` / `meta` / `linkedin` / `tiktok` / `microsoft` / `apple` / `youtube` | Per-platform paid ad analysis |
 | `obvious-communication` | Plain-language writing principles (Obvious Adams, 1916) |
 | `fal-ai` | Generate images/video/audio via fal.ai (FAL_KEY env) |
 | `gtm-cli` | GTM tag management + Meta Ads API queries |
 | `wise-bank` | Wise account/transaction queries (WISE_API_TOKEN env) |
+| `masumi-agent-messenger` | Encrypted agent-to-agent inboxes via the masumi CLI |
 
-In dev mode the loader also reads `~/.claude/skills/` so 29 skills are available locally.
+In dev mode the loader also reads `~/.claude/skills/`, so Patrick's full local skill library is available alongside the bundled set.
 
-### MCP servers (HTTP + stdio bridge)
-| Server | Tools | Auth |
-|---|---|---|
-| github | 41 | `GITHUB_TOKEN` (HTTP) |
-| linear | 42 | `LINEAR_API_KEY` (npx stdio) |
-| dune | 20 | `DUNE_API_KEY` (HTTP) |
-| fetch | 1 | none (npx stdio) |
+### MCP servers (HTTP + stdio bridge — accessed via subagents only)
+The MCP bridge boots in the background, connects each server, and wraps every MCP tool as an `AgentTool` named `mcp_<server>__<tool>`. **The main agent never sees these tools directly** — it delegates to a domain subagent (see below), which is the only consumer scoped to that server's tool prefix. Failed servers log a warning and don't block startup.
 
-The MCP bridge connects servers at boot, lists their tools, and wraps each as an `AgentTool` (sanitized name `mcp_<server>__<tool>`). Failed servers (e.g. sokosumi OAuth) log a warning and don't block startup.
+| Server | Auth | Approx tool count | Consumed by |
+|---|---|---|---|
+| github | `GITHUB_TOKEN` (HTTP) | ~40 | `delegate_to_github`, `delegate_to_coder` |
+| linear | `LINEAR_API_KEY` (npx stdio) | ~40 | `delegate_to_linear` |
+| dune | `DUNE_API_KEY` (HTTP) | ~20 | `delegate_to_dune` |
+| fetch | none (npx stdio) | 1 | `delegate_to_web`, `delegate_to_researcher`, `delegate_to_coder` |
 
 In dev mode, additional MCP servers from `~/.claude.json` get loaded (obsidian, google-docs, etc.) — those are local-only and not portable to Railway.
 
 ### Subagents
-A subagent is a tool whose `execute` spawns a fresh `Agent` with a focused system prompt + scoped tool set, runs it to completion via `runSubagent`, returns the final text + a turn count.
+A subagent is a tool whose `execute` spawns a fresh `Agent` with a focused system prompt + scoped tool set, runs it to completion via `runSubagent`, returns the final text + a turn count. Eight are wired into the main agent today.
 
 | Subagent | Model | Scoped tools |
 |---|---|---|
 | **coder** (`delegate_to_coder`) | `qwen/qwen3-coder-plus` (1M ctx, coding-specialized) | github MCP, fetch MCP, vault, facts |
 | **researcher** (`delegate_to_researcher`) | `moonshotai/kimi-k2-thinking` (262k ctx, reasoning) | fetch MCP, vault, facts, recall_thinking |
+| **github** (`delegate_to_github`) | fast (MiMo V2.5 Pro) | github MCP only |
+| **linear** (`delegate_to_linear`) | fast | linear MCP only |
+| **dune** (`delegate_to_dune`) | fast | dune MCP only |
+| **web** (`delegate_to_web`) | fast | fetch MCP only |
+| **moltbook** (`delegate_to_moltbook`) | fast | shell, vault, facts (uses `MOLTBOOK_API_KEY` + `SOKOSUMI_API_KEY` from env via shell) |
+| **reddit** (`delegate_to_reddit`) | fast | shell, vault, facts (drives a stealth Browserbase Chromium session through residential proxies; cookies persisted in a Browserbase context cached on `/data`) |
+
+The four MCP-domain subagents (github/linear/dune/web) all share one factory in `src/agent/subagents/mcp-domain.ts` — pass a spec (tool name, MCP prefix, system prompt) and you get a delegating subagent. Adding a new MCP server is a 1-line spec.
 
 ---
 
@@ -409,7 +426,7 @@ Pi has no native skills loader exported (it's internal to the coding-agent packa
 ```
 patrick2.0/
 ├── src/
-│   ├── index.ts                  # entry point: boot bot + MCP bridge
+│   ├── index.ts                  # entry: boot bot + MCP bridge + scheduler + masumi refresher + decay job
 │   ├── config.ts                 # env var loading + validation
 │   ├── log.ts                    # pino logger with PII redaction
 │   │
@@ -417,16 +434,20 @@ patrick2.0/
 │   │   └── bot.ts                # grammy bot, allowlist, dispatcher
 │   │
 │   ├── agent/
-│   │   ├── loop.ts               # handleUserMessage — the main turn flow
-│   │   ├── system-prompt.ts      # base prompt with stack/memory/tools awareness
-│   │   ├── memory-context.ts     # buildSystemPromptWithMemory — recall + injection
-│   │   ├── facts.ts              # background fact extractor (LLM-driven)
+│   │   ├── loop.ts               # handleUserMessage — reactive turn flow
+│   │   ├── scheduled-runner.ts   # autonomous cron-fired runs (no user channel; tools include send_telegram_message)
+│   │   ├── system-prompt.ts      # base prompt
+│   │   ├── memory-context.ts     # cache-aware split: stable prefix + per-turn recall
+│   │   ├── facts.ts              # background fact extractor (LLM-driven, confidence-weighted)
 │   │   ├── tools/                # one file per tool family
 │   │   │   ├── facts.ts
 │   │   │   ├── thinking.ts
-│   │   │   ├── todos.ts
+│   │   │   ├── todos.ts          # currently unused — Patrick uses Linear
 │   │   │   ├── time.ts
 │   │   │   ├── actions.ts
+│   │   │   ├── schedules.ts      # cron-style proactive prompts
+│   │   │   ├── shell.ts          # sandboxed run_shell (execFile, args separated)
+│   │   │   ├── telegram.ts       # send_telegram_message / send_telegram_photo (scheduled-only)
 │   │   │   ├── skills.ts
 │   │   │   ├── mcp-meta.ts
 │   │   │   ├── vault.ts
@@ -434,11 +455,23 @@ patrick2.0/
 │   │   │   └── gmail.ts
 │   │   └── subagents/
 │   │       ├── runner.ts         # generic runSubagent helper
-│   │       ├── coder.ts          # Qwen3-Coder Plus + GitHub + vault
-│   │       └── researcher.ts     # Kimi K2-Thinking + fetch + vault
+│   │       ├── coder.ts          # Qwen3-Coder Plus + GitHub + fetch + vault
+│   │       ├── researcher.ts     # Kimi K2-Thinking + fetch + vault
+│   │       ├── mcp-domain.ts     # factory for github/linear/dune/web domain subagents
+│   │       ├── moltbook.ts       # Moltbook engagement (shell + vault, MOLTBOOK + SOKOSUMI keys)
+│   │       └── reddit.ts         # Reddit via Browserbase + residential proxies
+│   │
+│   ├── scheduler/
+│   │   └── service.ts            # node-cron registry; reloaded on schedule CRUD
+│   │
+│   ├── masumi/
+│   │   └── auth-refresher.ts     # 45-min OAuth refresh into masumi-agent-messenger CLI secrets store
+│   │
+│   ├── maintenance/
+│   │   └── decay.ts              # daily fact-confidence decay job
 │   │
 │   ├── llm/
-│   │   ├── router.ts             # model class → Model<openai-completions> over OpenRouter
+│   │   ├── router.ts             # model class → Model<openai-completions> over OpenRouter (reasoning/fast/cheap/coding)
 │   │   └── embeddings.ts         # OpenRouter embeddings client (text-embedding-3-small)
 │   │
 │   ├── db/
@@ -448,6 +481,7 @@ patrick2.0/
 │   │       ├── facts.ts
 │   │       ├── thinking.ts
 │   │       ├── actions.ts
+│   │       ├── schedules.ts
 │   │       └── todos.ts
 │   │
 │   ├── google/
@@ -468,9 +502,10 @@ patrick2.0/
 │       └── notes.ts              # safe path resolution + read/write/search
 │
 ├── skills/                       # bundled SKILL.md files (baked into Docker image)
-│   ├── ads-google/
-│   ├── ads-meta/
-│   ├── ... (11 skills total)
+│   ├── ads-apple/  ads-google/  ads-linkedin/  ads-meta/
+│   ├── ads-microsoft/  ads-tiktok/  ads-youtube/
+│   ├── fal-ai/  gtm-cli/  masumi-agent-messenger/
+│   ├── obvious-communication/
 │   └── wise-bank/
 │       ├── SKILL.md
 │       └── wise_query.sh
@@ -478,12 +513,16 @@ patrick2.0/
 ├── migrations/                   # node-pg-migrate, run at container start
 │   ├── 1700000000000_init.cjs
 │   ├── 1700000001000_messages_embedding.cjs
-│   └── 1700000002000_todos.cjs
+│   ├── 1700000002000_todos.cjs
+│   ├── 1700000003000_messages_raw.cjs           # full AgentMessage jsonb (preserves tool calls + results)
+│   ├── 1700000004000_schedules.cjs              # cron schedule store
+│   ├── 1700000005000_tsvector_hybrid.cjs        # fulltext + vector hybrid search
+│   └── 1700000006000_hnsw_indexes.cjs           # HNSW for facts + messages embeddings
 │
 ├── scripts/
 │   └── google-oauth.ts           # one-time OAuth flow runner
 │
-├── Dockerfile                    # multi-stage: build TS, prune dev deps, install git + bash
+├── Dockerfile                    # multi-stage: build TS, prune dev deps, install git + bash + masumi-agent-messenger CLI
 ├── package.json
 ├── tsconfig.json / tsconfig.build.json
 ├── biome.json
@@ -504,7 +543,8 @@ patrick2.0/
 | `DATABASE_URL` | yes | Postgres URL (Railway internal in prod) |
 | `NODE_ENV` | no | `production` switches off dev-only paths (e.g. `~/.claude.json` MCP loading) |
 | `LOG_LEVEL` | no | pino level, default `info` |
-| `VAULT_REPO` | no | Git URL of the Obsidian vault repo |
+| `TELEGRAM_WEBHOOK_URL` | no | If set, switches grammy from long-poll to webhook |
+| `VAULT_REPO` | no | Git URL of the Obsidian vault repo (default `github.com/PatrickTobler/patrick-vault`) |
 | `VAULT_DIR` | no | Where to clone the vault, default `/data/vault` |
 | `GITHUB_TOKEN` | no | Auth for GitHub MCP + vault git push |
 | `LINEAR_API_KEY` | no | Linear MCP |
@@ -515,6 +555,11 @@ patrick2.0/
 | `FAL_KEY` | no | fal.ai (used by `fal-ai` skill) |
 | `WISE_API_TOKEN` | no | Wise (used by `wise-bank` skill) |
 | `META_ADS_TOKEN`, `META_PIXEL_ID`, `META_AD_ACCOUNT_ID` | no | Meta Ads (used by `gtm-cli` skill) |
+| `MOLTBOOK_API_KEY` | no | Moltbook subagent — Bearer token for `api.moltbook.com` |
+| `SOKOSUMI_API_KEY` | no | Moltbook subagent — Bearer token for `masumi-agent-messenger` Elena thread replies |
+| `BROWSERBASE_API_KEY`, `BROWSERBASE_PROJECT_ID` | no | Reddit subagent — stealth Chromium session host |
+| `REDDIT_EMAIL`, `REDDIT_PASSWORD` | no | Reddit subagent — login credentials (account dedicated to this bot) |
+| `MASUMI_AGENT_BACKUP_B64`, `MASUMI_AGENT_BACKUP_PASSPHRASE` | no | First-boot restore of masumi-agent-messenger namespace keys on Railway volume |
 
 ---
 
@@ -571,9 +616,7 @@ Railway resources:
 ## What's intentionally NOT here yet
 
 Per [`SPECS.md`](./SPECS.md), the roadmap continues with:
-- **F4** — proactivity (scheduler, morning briefing, T-10 meeting prep, urgent email watcher, EOD recap)
+- **F4** — most of proactivity is **landed** (scheduler service, schedules tools, autonomous scheduled-runner that may stay silent or ping via `send_telegram_message`). Still to do: opinionated wakeup recipes (morning briefing, T-10 meeting prep, urgent email watcher, EOD recap) on top of the generic scheduler.
 - **F5** — approval flows, quiet hours, kill switch
 - **F3** — personal channel ingestion (Telegram personal, Slack, WhatsApp read-only)
-- **F7** — production hardening (backups, structured monitoring, webhook switch)
-
-The bot is fully reactive today. F4 is what makes it proactive — the scheduler watches state and pings Patrick when something matters.
+- **F7** — production hardening (backups, structured monitoring; webhook switch is wired via `TELEGRAM_WEBHOOK_URL`)
