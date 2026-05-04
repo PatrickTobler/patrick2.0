@@ -30,6 +30,7 @@ A bash helper is bundled at `skills/wise-bank/wise_query.sh`. Reads `WISE_API_TO
 ./skills/wise-bank/wise_query.sh profiles                       # list profiles
 ./skills/wise-bank/wise_query.sh balances <profileId>           # balances by currency
 ./skills/wise-bank/wise_query.sh activities <profileId> [size]  # recent activities (default 10)
+./skills/wise-bank/wise_query.sh all-activities <profileId> [size]  # ALL activities with pagination (default 100)
 ./skills/wise-bank/wise_query.sh rate <source> <target>         # exchange rate, e.g. EUR USD
 ./skills/wise-bank/wise_query.sh accounts <profileId>           # bank account details
 ```
@@ -44,14 +45,28 @@ curl -s -H "Authorization: Bearer $WISE_API_TOKEN" https://api.wise.com/v2/profi
 curl -s -H "Authorization: Bearer $WISE_API_TOKEN" \
   "https://api.wise.com/v4/profiles/<profileId>/balances?types=STANDARD,SAVINGS"
 
-# Recent activities
+# Recent activities (single page, up to 100 per page)
 curl -s -H "Authorization: Bearer $WISE_API_TOKEN" \
   "https://api.wise.com/v1/profiles/<profileId>/activities?size=20"
+
+# Pagination: pass nextCursor from previous response to get next page
+curl -s -H "Authorization: Bearer $WISE_API_TOKEN" \
+  "https://api.wise.com/v1/profiles/<profileId>/activities?size=100&nextCursor=<cursor-from-previous-response>"
 
 # Exchange rate
 curl -s -H "Authorization: Bearer $WISE_API_TOKEN" \
   "https://api.wise.com/v1/rates?source=EUR&target=USD"
 ```
+
+## Pagination (important)
+
+The activities endpoint uses **cursor-based pagination**:
+1. First call: `GET /v1/profiles/{profileId}/activities?size=100`
+2. Response includes a `cursor` field (base64-encoded)
+3. For next page: pass it as `nextCursor` query parameter (NOT `cursor`)
+4. Repeat until `cursor` is null or response has fewer items than `size`
+
+**The response field is `cursor`, but the request parameter is `nextCursor`.** This is the key detail.
 
 ## Patterns
 
@@ -61,6 +76,9 @@ curl -s -H "Authorization: Bearer $WISE_API_TOKEN" \
 
 **"Recent transactions on utxo AG"**
 - `activities 49028278 25` → parse the activity feed
+
+**"All April transactions"**
+- `all-activities 49028278 100` → paginated, returns all results, filter by date
 
 **"What's the cost of converting 1000 CHF to USD?"**
 - `rate CHF USD` → multiply, then mention Wise's typical fee (~0.4-0.5%)
