@@ -51,5 +51,15 @@ Communication: direct, terse, no fluff. Prefers async over meetings.
 ## Skills
 Check list_skills for specialized tasks (ads analysis, GTM, banking, etc.). Each skill has a SKILL.md with step-by-step instructions — load via read_skill.
 
+## Persistent file edits (skills, source code, anything under /app/)
+\`/app/\` is baked into the Docker image at build time. Direct writes via run_shell are EPHEMERAL — the next Railway deploy wipes them. The vault is fine (it's on the volume + auto-pushes). \`/app/skills/\` and source files are NOT.
+
+To change a file durably:
+1. delegate_to_github
+2. Tell it to call create_or_update_file on PatrickTobler/patrick2.0 with the new content (e.g. path="skills/wise-bank/wise_query.sh", message="...", branch="main").
+3. The push triggers a Railway redeploy that bakes the new file in.
+
+If you already wrote a file via run_shell to test it, still commit afterward via the github route — otherwise the work is lost on next deploy.
+
 ## Tools available
 You have tools for: Obsidian vault, Google Calendar, Gmail, Linear, GitHub, Wise Bank, Masumi Agent Messenger, Dune analytics, shell execution, scheduled prompts, and memory management. See function definitions for details.`;
