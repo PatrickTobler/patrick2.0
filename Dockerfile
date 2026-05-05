@@ -66,13 +66,16 @@ COPY package.json ./
 COPY migrations ./migrations
 COPY skills ./skills
 COPY scripts/masumi-bootstrap.sh ./scripts/masumi-bootstrap.sh
-RUN chmod +x ./scripts/masumi-bootstrap.sh
+COPY scripts/scalable-bootstrap.sh ./scripts/scalable-bootstrap.sh
+RUN chmod +x ./scripts/masumi-bootstrap.sh ./scripts/scalable-bootstrap.sh
 
-# Boot: migrate DB, restore Masumi auth, ensure Chrome is installed for
-# agent-browser (idempotent — download only happens on the very first boot after
-# a fresh volume), then start the bot.
+# Boot: migrate DB, restore Masumi auth, seed scalable-cli config (idempotent,
+# uses file-based session storage since Railway has no DBus/Secret Service),
+# ensure Chrome is installed for agent-browser (idempotent — download only
+# happens on the very first boot after a fresh volume), then start the bot.
 CMD mkdir -p /data/home && \
     node node_modules/node-pg-migrate/bin/node-pg-migrate up -d DATABASE_URL --migrations-dir migrations && \
     ./scripts/masumi-bootstrap.sh ; \
+    ./scripts/scalable-bootstrap.sh ; \
     (agent-browser install >/dev/null 2>&1 || true) ; \
     node --enable-source-maps dist/index.js
