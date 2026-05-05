@@ -206,7 +206,7 @@ flowchart LR
                                      │  │             pause/resume/delete  │  │
                                      │  │  • Shell:   run_shell            │  │
                                      │  │  • Skills:  list/read/reload     │  │
-                                     │  │             (12 bundled)         │  │
+                                     │  │             (13 bundled)         │  │
                                      │  │  • Subagents (8): coder,         │  │
                                      │  │     researcher, github, linear,  │  │
                                      │  │     dune, web, moltbook, reddit  │  │
@@ -338,7 +338,7 @@ Total surface for the main reactive agent: **~31 native tools + 8 subagents = ~3
 ### Skills (bundled in `./skills/`, loaded via Agent Skills standard)
 Progressive disclosure: only `name + description` are in the system prompt; the agent calls `read_skill` to load full SKILL.md content on demand.
 
-| Bundled (12) | Purpose |
+| Bundled (13) | Purpose |
 |---|---|
 | `ads-google` / `meta` / `linkedin` / `tiktok` / `microsoft` / `apple` / `youtube` | Per-platform paid ad analysis |
 | `obvious-communication` | Plain-language writing principles (Obvious Adams, 1916) |
@@ -346,6 +346,7 @@ Progressive disclosure: only `name + description` are in the system prompt; the 
 | `gtm-cli` | GTM tag management + Meta Ads API queries |
 | `wise-bank` | Wise account/transaction queries (WISE_API_TOKEN env) |
 | `masumi-agent-messenger` | Encrypted agent-to-agent inboxes via the masumi CLI |
+| `scalable` | **READ-ONLY** Scalable Capital broker queries (overview, transactions, holdings) via the `sc` CLI. Auth seeded once interactively via `sc login`; trading subcommands are blocked at the wrapper. |
 
 In dev mode the loader also reads `~/.claude/skills/`, so Patrick's full local skill library is available alongside the bundled set.
 

@@ -41,6 +41,18 @@ RUN npm install -g @masumi_network/masumi-agent-messenger@latest || true
 # on first boot into the /data volume so it survives redeploys.
 RUN npm install -g agent-browser@latest || true
 
+# Scalable Capital CLI (`sc`) — used by the scalable skill for READ-ONLY broker
+# queries (overview, transactions, holdings). Auth tokens persist on the
+# /data/home volume via XDG_CONFIG_HOME, so `sc login` only needs to run once
+# (interactively, via railway ssh).
+ARG SC_VERSION=v0.2.0
+RUN curl -fsSL -o /tmp/sc.tar.gz \
+        "https://github.com/ScalableCapital/scalable-cli/releases/download/${SC_VERSION}/sc-${SC_VERSION}-linux-x86_64-gnu.tar.gz" \
+    && tar -xzf /tmp/sc.tar.gz -C /tmp \
+    && mv "/tmp/sc-${SC_VERSION}-linux-x86_64-gnu/sc" /usr/local/bin/sc \
+    && chmod +x /usr/local/bin/sc \
+    && rm -rf /tmp/sc.tar.gz "/tmp/sc-${SC_VERSION}-linux-x86_64-gnu"
+
 # The CLI + agent-browser store state under $HOME. Point HOME at the Railway
 # volume so auth state + Chrome binary + Reddit session cookies persist across
 # deploys.
