@@ -162,3 +162,67 @@ export async function sendNew(input: { to: string; subject: string; body: string
 	const raw = encodeBase64Url(buildRfc822(input));
 	return callApi("/messages/send", { method: "POST", body: JSON.stringify({ raw }) });
 }
+
+export interface CreateNewDraftInput {
+	to: string;
+	subject: string;
+	body: string;
+}
+
+export async function createNewDraft(input: CreateNewDraftInput): Promise<{ id: string; messageId: string }> {
+	const raw = encodeBase64Url(buildRfc822(input));
+	const data = await callApi<{ id: string; message: { id: string } }>("/drafts", {
+		method: "POST",
+		body: JSON.stringify({ message: { raw } }),
+	});
+	return { id: data.id, messageId: data.message.id };
+}
+
+export interface GmailLabel {
+	id: string;
+	name: string;
+	type: "system" | "user";
+}
+
+let labelCache: GmailLabel[] | null = null;
+
+export async function listLabels(): Promise<GmailLabel[]> {
+	if (labelCache) return labelCache;
+	const data = await callApi<{ labels?: GmailLabel[] }>("/labels");
+	labelCache = data.labels ?? [];
+	return labelCache;
+}
+
+// Resolve label NAMES to label IDs (case-insensitive). System labels (INBOX,
+// UNREAD, STARRED, IMPORTANT, etc.) and user labels alike. Unknown names are
+// returned in `unknown` so the caller can refuse the operation.
+export async function resolveLabelIds(names: string[]): Promise<{ resolved: string[]; unknown: string[] }> {
+	if (names.length === 0) return { resolved: [], unknown: [] };
+	const labels = await listLabels();
+	const byNameLower = new Map<string, string>();
+	for (const l of labels) byNameLower.set(l.name.toLowerCase(), l.id);
+	const resolved: string[] = [];
+	const unknown: string[] = [];
+	for (const name of names) {
+		const id = byNameLower.get(name.toLowerCase());
+		if (id) resolved.push(id);
+		else unknown.push(name);
+	}
+	return { resolved, unknown };
+}
+
+export interface ModifyLabelsInput {
+	messageId: string;
+	addLabelIds?: string[];
+	removeLabelIds?: string[];
+}
+
+export async function modifyLabels(input: ModifyLabelsInput): Promise<void> {
+	await callApi(`/messages/${input.messageId}/modify`, {
+		method: "POST",
+		body: JSON.stringify({
+			addLabelIds: input.addLabelIds ?? [],
+			removeLabelIds: input.removeLabelIds ?? [],
+		}),
+	});
+}

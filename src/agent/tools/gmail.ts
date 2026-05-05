@@ -1,6 +1,15 @@
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { type Static, Type } from "@mariozechner/pi-ai";
-import { type EmailSummary, createDraft, listMessages, readEmail, sendDraft } from "../../google/gmail.ts";
+import {
+	type EmailSummary,
+	createDraft,
+	createNewDraft,
+	listMessages,
+	modifyLabels,
+	readEmail,
+	resolveLabelIds,
+	sendDraft,
+} from "../../google/gmail.ts";
 
 function fmtSummary(e: EmailSummary): string {
 	const flag = e.unread ? "•" : " ";
@@ -115,5 +124,156 @@ export const sendDraftTool: AgentTool<typeof SendSchema> = {
 	},
 };
 
+const NewDraftSchema = Type.Object({
+	to: Type.String({ description: "Recipient email.", minLength: 3, maxLength: 200 }),
+	subject: Type.String({ description: "Subject line.", minLength: 1, maxLength: 300 }),
+	body: Type.String({
+		description: "Plain text body. Match Patrick's tone (terse, direct).",
+		minLength: 1,
+		maxLength: 50_000,
+	}),
+});
+
+export const draftNewEmailTool: AgentTool<typeof NewDraftSchema> = {
+	name: "draft_new_email",
+	label: "Draft a new (non-reply) email",
+	description:
+		"Create a fresh outbound email draft (NOT a reply — for replies use draft_email with thread_id). Always draft first, wait for explicit Patrick approval, then call send_draft. NEVER auto-send.",
+	parameters: NewDraftSchema,
+	execute: async (_id, params: Static<typeof NewDraftSchema>) => {
+		const draft = await createNewDraft(params);
+		return {
+			content: [
+				{
+					type: "text",
+					text: `Drafted (id ${draft.id}):\nTo: ${params.to}\nSubject: ${params.subject}\n\n${params.body}\n\nReply 'send' or call send_draft with id="${draft.id}" to send it.`,
+				},
+			],
+			details: { id: draft.id, messageId: draft.messageId },
+		};
+	},
+};
+
+const MarkSchema = Type.Object({
+	id: Type.String({
+		description: "Email message id (from list_emails or read_email).",
+		minLength: 1,
+		maxLength: 200,
+	}),
+});
+
+export const markReadTool: AgentTool<typeof MarkSchema> = {
+	name: "mark_read",
+	label: "Mark email as read",
+	description:
+		"Mark an email as read (removes the UNREAD label). Useful after summarizing low-priority emails Patrick doesn't need to see again. Don't mark important/actionable emails as read without telling Patrick.",
+	parameters: MarkSchema,
+	execute: async (_id, { id }: Static<typeof MarkSchema>) => {
+		await modifyLabels({ messageId: id, removeLabelIds: ["UNREAD"] });
+		return { content: [{ type: "text", text: `Marked ${id} as read.` }], details: { id } };
+	},
+};
+
+export const markUnreadTool: AgentTool<typeof MarkSchema> = {
+	name: "mark_unread",
+	label: "Mark email as unread",
+	description:
+		"Mark an email as unread (adds the UNREAD label). Useful for 'remind me to look at this later' patterns or to undo an accidental mark_read.",
+	parameters: MarkSchema,
+	execute: async (_id, { id }: Static<typeof MarkSchema>) => {
+		await modifyLabels({ messageId: id, addLabelIds: ["UNREAD"] });
+		return { content: [{ type: "text", text: `Marked ${id} as unread.` }], details: { id } };
+	},
+};
+
+const LabelSchema = Type.Object({
+	id: Type.String({ description: "Email message id.", minLength: 1, maxLength: 200 }),
+	add: Type.Optional(
+		Type.Array(Type.String({ minLength: 1, maxLength: 100 }), {
+			description:
+				"Label NAMES to add (case-insensitive). System labels: STARRED, IMPORTANT, UNREAD. Or user-created label names exactly as they appear in Gmail.",
+			maxItems: 10,
+		}),
+	),
+	remove: Type.Optional(
+		Type.Array(Type.String({ minLength: 1, maxLength: 100 }), {
+			description: "Label NAMES to remove. Same naming as 'add'.",
+			maxItems: 10,
+		}),
+	),
+});
+
+const FORBIDDEN_ADD = new Set(["spam", "trash"]);
+const FORBIDDEN_REMOVE = new Set(["inbox"]); // removing INBOX is archive — Patrick said no archive.
+
+export const labelEmailTool: AgentTool<typeof LabelSchema> = {
+	name: "label_email",
+	label: "Add or remove Gmail labels",
+	description:
+		"Add and/or remove Gmail labels on a message by NAME. Names are case-insensitive. RESTRICTED: cannot add SPAM or TRASH (no auto-spamming or trashing); cannot remove INBOX (that would archive — use Gmail directly if archiving is wanted). For mark-as-read use mark_read; for star/unstar use add=['STARRED'] / remove=['STARRED']. Unknown label names cause the call to refuse without changes.",
+	parameters: LabelSchema,
+	execute: async (_id, { id, add, remove }: Static<typeof LabelSchema>) => {
+		const addNames = (add ?? []).filter(Boolean);
+		const removeNames = (remove ?? []).filter(Boolean);
+
+		const blockedAdd = addNames.filter((n) => FORBIDDEN_ADD.has(n.toLowerCase()));
+		if (blockedAdd.length > 0) {
+			return {
+				content: [
+					{
+						type: "text",
+						text: `Refused: cannot add label(s) ${blockedAdd.join(", ")}. SPAM / TRASH are not exposed.`,
+					},
+				],
+				details: { error: "blocked_add", blocked: blockedAdd },
+			};
+		}
+		const blockedRemove = removeNames.filter((n) => FORBIDDEN_REMOVE.has(n.toLowerCase()));
+		if (blockedRemove.length > 0) {
+			return {
+				content: [
+					{
+						type: "text",
+						text: "Refused: cannot remove INBOX label (would archive — Patrick disabled archiving via this tool).",
+					},
+				],
+				details: { error: "blocked_remove", blocked: blockedRemove },
+			};
+		}
+
+		const addRes = await resolveLabelIds(addNames);
+		const removeRes = await resolveLabelIds(removeNames);
+		const unknown = [...addRes.unknown, ...removeRes.unknown];
+		if (unknown.length > 0) {
+			return {
+				content: [
+					{
+						type: "text",
+						text: `Refused: unknown label name(s) ${unknown.join(", ")}. Use exact label names as they appear in Gmail. System labels: STARRED, IMPORTANT, UNREAD.`,
+					},
+				],
+				details: { error: "unknown_labels", unknown },
+			};
+		}
+
+		await modifyLabels({ messageId: id, addLabelIds: addRes.resolved, removeLabelIds: removeRes.resolved });
+		const summary =
+			(addNames.length ? `+${addNames.join(",")}` : "") + (removeNames.length ? ` -${removeNames.join(",")}` : "");
+		return {
+			content: [{ type: "text", text: `Updated labels on ${id}: ${summary.trim()}` }],
+			details: { id, added: addNames, removed: removeNames },
+		};
+	},
+};
+
 // biome-ignore lint/suspicious/noExplicitAny: pi's AgentTool[] expects any-typed schema
-export const gmailTools: AgentTool<any>[] = [listEmailsTool, readEmailTool, draftReplyTool, sendDraftTool];
+export const gmailTools: AgentTool<any>[] = [
+	listEmailsTool,
+	readEmailTool,
+	draftReplyTool,
+	draftNewEmailTool,
+	sendDraftTool,
+	markReadTool,
+	markUnreadTool,
+	labelEmailTool,
+];
