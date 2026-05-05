@@ -45,12 +45,21 @@ RUN npm install -g agent-browser@latest || true
 # queries (overview, transactions, holdings). Auth tokens persist on the
 # /data/home volume via XDG_CONFIG_HOME, so `sc login` only needs to run once
 # (interactively, via railway ssh).
+#
+# The real binary lives at /usr/local/lib/sc-real. /usr/local/bin/sc is a
+# sandbox wrapper (scripts/sc-sandbox.sh) that hard-blocks every broker write
+# subcommand (trade buy/sell/cancel, watchlist add/remove, price-alerts
+# add/remove, savings-plans add/remove, context select, logout). Without this
+# wrapper the agent's run_shell tool could call `sc broker trade ...` directly
+# even though the sc_query.sh skill wrapper hides it.
 ARG SC_VERSION=v0.2.0
-RUN curl -fsSL -o /tmp/sc.tar.gz \
+COPY scripts/sc-sandbox.sh /usr/local/bin/sc
+RUN chmod +x /usr/local/bin/sc \
+    && curl -fsSL -o /tmp/sc.tar.gz \
         "https://github.com/ScalableCapital/scalable-cli/releases/download/${SC_VERSION}/sc-${SC_VERSION}-linux-x86_64-gnu.tar.gz" \
     && tar -xzf /tmp/sc.tar.gz -C /tmp \
-    && mv "/tmp/sc-${SC_VERSION}-linux-x86_64-gnu/sc" /usr/local/bin/sc \
-    && chmod +x /usr/local/bin/sc \
+    && mv "/tmp/sc-${SC_VERSION}-linux-x86_64-gnu/sc" /usr/local/lib/sc-real \
+    && chmod +x /usr/local/lib/sc-real \
     && rm -rf /tmp/sc.tar.gz "/tmp/sc-${SC_VERSION}-linux-x86_64-gnu"
 
 # The CLI + agent-browser store state under $HOME. Point HOME at the Railway
