@@ -90,7 +90,9 @@ async function mapWithConcurrency<I, O>(items: I[], limit: number, fn: (item: I)
 		while (true) {
 			const idx = next++;
 			if (idx >= items.length) return;
-			results[idx] = await fn(items[idx]);
+			const item = items[idx];
+			if (item === undefined) continue;
+			results[idx] = await fn(item);
 		}
 	});
 	await Promise.all(workers);
