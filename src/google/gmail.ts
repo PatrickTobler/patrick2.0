@@ -38,21 +38,63 @@ function header(headers: RawHeader[] | undefined, name: string): string {
 	return h?.value ?? "";
 }
 
+// Retry config for transient errors (429 rate limit, 5xx server errors).
+// Triage runs against 30 unread messages do 30+ getMessage calls in quick
+// succession; Gmail's per-user-per-second quota can briefly trip 429. We
+// back off and retry instead of bubbling to the agent as a hard failure.
+const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
+const MAX_RETRIES = 5;
+const BASE_DELAY_MS = 500;
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
 async function callApi<T>(path: string, init: RequestInit = {}): Promise<T> {
-	const token = await getGoogleAccessToken();
-	const res = await fetch(`${BASE}${path}`, {
-		...init,
-		headers: {
-			...(init.headers as Record<string, string> | undefined),
-			Authorization: `Bearer ${token}`,
-			"Content-Type": "application/json",
-		},
-	});
-	if (!res.ok) {
-		const body = await res.text();
-		throw new Error(`Gmail API ${res.status} on ${path}: ${body.slice(0, 300)}`);
+	let lastBody = "";
+	let lastStatus = 0;
+	for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+		const token = await getGoogleAccessToken();
+		const res = await fetch(`${BASE}${path}`, {
+			...init,
+			headers: {
+				...(init.headers as Record<string, string> | undefined),
+				Authorization: `Bearer ${token}`,
+				"Content-Type": "application/json",
+			},
+		});
+		if (res.ok) return (await res.json()) as T;
+
+		lastStatus = res.status;
+		lastBody = await res.text();
+		if (!RETRYABLE_STATUS.has(res.status) || attempt === MAX_RETRIES) break;
+
+		// Honor Retry-After if Gmail sent one; otherwise exponential backoff with jitter
+		const retryAfterRaw = res.headers.get("retry-after");
+		const retryAfterMs = retryAfterRaw ? Number(retryAfterRaw) * 1000 : NaN;
+		const backoff = Number.isFinite(retryAfterMs) ? retryAfterMs : BASE_DELAY_MS * 2 ** attempt;
+		const jitter = Math.floor(Math.random() * 200);
+		await sleep(backoff + jitter);
 	}
-	return (await res.json()) as T;
+	throw new Error(`Gmail API ${lastStatus} on ${path}: ${lastBody.slice(0, 300)}`);
+}
+
+// Cap on parallel getMessage calls per listMessages. Gmail's per-user
+// burst limit is generous but not infinite — fanning out 30 requests at
+// once routinely trips 429. 8 parallel keeps total wall time low while
+// staying well under the burst cap.
+const LIST_CONCURRENCY = 8;
+
+async function mapWithConcurrency<I, O>(items: I[], limit: number, fn: (item: I) => Promise<O>): Promise<O[]> {
+	const results: O[] = new Array(items.length);
+	let next = 0;
+	const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+		while (true) {
+			const idx = next++;
+			if (idx >= items.length) return;
+			results[idx] = await fn(items[idx]);
+		}
+	});
+	await Promise.all(workers);
+	return results;
 }
 
 export async function listMessages(opts: { q?: string; maxResults?: number }): Promise<EmailSummary[]> {
@@ -60,7 +102,7 @@ export async function listMessages(opts: { q?: string; maxResults?: number }): P
 	if (opts.q) params.set("q", opts.q);
 	const list = await callApi<{ messages?: { id: string; threadId: string }[] }>(`/messages?${params}`);
 	const ids = (list.messages ?? []).slice(0, opts.maxResults ?? 20);
-	const summaries = await Promise.all(ids.map((m) => getMessage(m.id, "metadata")));
+	const summaries = await mapWithConcurrency(ids, LIST_CONCURRENCY, (m) => getMessage(m.id, "metadata"));
 	return summaries.map(toSummary);
 }
 
