@@ -390,16 +390,29 @@ On Patrick's Mac, the **Obsidian Git plugin** auto-pulls every 5 min and auto-pu
 
 ---
 
-## Google OAuth (Calendar + Gmail)
+## Google OAuth (Calendar + Gmail) — multi-account
 
-One Google Cloud Desktop OAuth client covers both APIs. Scopes:
+One Google Cloud Desktop OAuth client covers all APIs and all accounts. Scopes:
 - `calendar` (full read/write)
 - `gmail.readonly`, `gmail.modify`, `gmail.send`
 - `userinfo.email`
 
-The one-time auth runs locally via `scripts/google-oauth.ts` (loopback flow on `localhost:8765`). Result: a long-lived **refresh token** stored as `GOOGLE_REFRESH_TOKEN` env var. The bot exchanges it for short-lived access tokens at runtime, cached in memory until 1 min before expiry.
+**Per-account refresh tokens** — each Gmail account has its own env var:
+- `GOOGLE_REFRESH_TOKEN` → the **primary** account (default)
+- `GOOGLE_REFRESH_TOKEN_<NAME>` → any additional account (e.g. `GOOGLE_REFRESH_TOKEN_PERSONAL`)
 
-`gmail.send_draft` requires explicit Patrick approval per the spec — never auto-sends.
+The lowercase `<name>` is what the agent passes as the `account` parameter to gmail tools. By default `list_emails` merges results across every configured account; other tools (`read_email`, `label_email`, `mark_read`, `draft_email`, `send_draft`, etc.) take an `account` argument that's plumbed back from the list result.
+
+**Adding an account:**
+```bash
+GOOGLE_CLIENT_ID=... GOOGLE_CLIENT_SECRET=... npx tsx scripts/google-oauth.ts personal
+# Sign in with the Google account you want to add. The script prints
+# GOOGLE_REFRESH_TOKEN_PERSONAL=<token>. Paste that on Railway and restart.
+```
+
+The auth helper runs a loopback OAuth flow on `localhost:8765`. Resulting refresh tokens are long-lived; the bot exchanges them for short-lived access tokens at runtime, cached in memory per account until 1 min before expiry.
+
+`gmail.send_draft` requires explicit Patrick approval per the spec — never auto-sends, regardless of account.
 
 ---
 
@@ -552,7 +565,8 @@ patrick2.0/
 | `DUNE_API_KEY` | no | Dune MCP |
 | `GOOGLE_CLIENT_ID` | no | OAuth client (Calendar + Gmail) |
 | `GOOGLE_CLIENT_SECRET` | no | OAuth client secret |
-| `GOOGLE_REFRESH_TOKEN` | no | Long-lived refresh token from `scripts/google-oauth.ts` |
+| `GOOGLE_REFRESH_TOKEN` | no | Long-lived refresh token for the **primary** Gmail/Calendar account |
+| `GOOGLE_REFRESH_TOKEN_<NAME>` | no | Refresh token for any additional Gmail account (e.g. `_PERSONAL`). Lowercase `<name>` is what tools accept as `account`. |
 | `FAL_KEY` | no | fal.ai (used by `fal-ai` skill) |
 | `WISE_API_TOKEN` | no | Wise (used by `wise-bank` skill) |
 | `META_ADS_TOKEN`, `META_PIXEL_ID`, `META_AD_ACCOUNT_ID` | no | Meta Ads (used by `gtm-cli` skill) |
@@ -587,8 +601,9 @@ npm run migrate:up
 The OAuth flow for Google (one-time):
 
 ```bash
-GOOGLE_CLIENT_ID=... GOOGLE_CLIENT_SECRET=... npx tsx scripts/google-oauth.ts
-# Copy the printed GOOGLE_REFRESH_TOKEN into your .env or Railway env
+GOOGLE_CLIENT_ID=... GOOGLE_CLIENT_SECRET=... npx tsx scripts/google-oauth.ts          # primary
+GOOGLE_CLIENT_ID=... GOOGLE_CLIENT_SECRET=... npx tsx scripts/google-oauth.ts personal # an additional account
+# Copy the printed env var (GOOGLE_REFRESH_TOKEN or GOOGLE_REFRESH_TOKEN_<NAME>) into your .env or Railway env
 ```
 
 ---

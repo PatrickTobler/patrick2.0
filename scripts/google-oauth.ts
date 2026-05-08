@@ -6,6 +6,11 @@ const CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
 const PORT = 8765;
 const REDIRECT_URI = `http://localhost:${PORT}/oauth/callback`;
 
+// Account label printed alongside the env var. `primary` (default) maps to
+// GOOGLE_REFRESH_TOKEN; any other name maps to GOOGLE_REFRESH_TOKEN_<UPPER>.
+const ACCOUNT = (process.argv[2] ?? "primary").trim().toLowerCase();
+const ENV_KEY = ACCOUNT === "primary" ? "GOOGLE_REFRESH_TOKEN" : `GOOGLE_REFRESH_TOKEN_${ACCOUNT.toUpperCase()}`;
+
 const SCOPES = [
 	"https://www.googleapis.com/auth/calendar",
 	"https://www.googleapis.com/auth/gmail.readonly",
@@ -79,15 +84,17 @@ const server = createServer(async (req, res) => {
 		.end("<h1>Done.</h1><p>Refresh token printed in your terminal. You can close this tab.</p>");
 
 	console.log("\n=== SUCCESS ===");
+	console.log(`Account: ${ACCOUNT}`);
 	console.log("Scopes granted:", tokens.scope);
-	console.log(`\nGOOGLE_REFRESH_TOKEN=${tokens.refresh_token}`);
-	console.log("\nPaste the line above into the chat.\n");
+	console.log(`\n${ENV_KEY}=${tokens.refresh_token}`);
+	console.log(`\nSet that env var on Railway (railway variables --set "${ENV_KEY}=...") and restart the service.\n`);
 	setTimeout(() => process.exit(0), 500);
 });
 
 server.listen(PORT, () => {
+	console.log(`Account label: ${ACCOUNT} (env var: ${ENV_KEY})`);
 	console.log(`Listening on http://localhost:${PORT}`);
-	console.log("Opening browser for Google consent...");
+	console.log("Opening browser for Google consent — sign in with the account you want to add.");
 	console.log("If browser does not open, visit:\n", authUrl.toString());
 	spawn("open", [authUrl.toString()], { stdio: "ignore", detached: true }).unref();
 });
