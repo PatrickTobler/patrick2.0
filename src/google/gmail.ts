@@ -69,7 +69,7 @@ async function callApi<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 		// Honor Retry-After if Gmail sent one; otherwise exponential backoff with jitter
 		const retryAfterRaw = res.headers.get("retry-after");
-		const retryAfterMs = retryAfterRaw ? Number(retryAfterRaw) * 1000 : NaN;
+		const retryAfterMs = retryAfterRaw ? Number(retryAfterRaw) * 1000 : Number.NaN;
 		const backoff = Number.isFinite(retryAfterMs) ? retryAfterMs : BASE_DELAY_MS * 2 ** attempt;
 		const jitter = Math.floor(Math.random() * 200);
 		await sleep(backoff + jitter);
