@@ -55,7 +55,10 @@ function writePersistedRefresh(refreshToken: string): void {
 }
 
 function currentRefreshToken(): string | undefined {
-	return readPersistedRefresh() ?? process.env.WHOOP_REFRESH_TOKEN?.trim() || undefined;
+	const persisted = readPersistedRefresh();
+	if (persisted) return persisted;
+	const fromEnv = process.env.WHOOP_REFRESH_TOKEN?.trim();
+	return fromEnv || undefined;
 }
 
 export async function getWhoopAccessToken(): Promise<string> {
