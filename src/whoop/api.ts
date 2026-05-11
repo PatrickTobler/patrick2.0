@@ -1,6 +1,9 @@
 import { getWhoopAccessToken } from "./auth.ts";
 
-const BASE = "https://api.prod.whoop.com/developer/v1";
+// v2 is the current WHOOP Developer API. Recovery and activity/sleep are v2-only
+// (v1 404s); cycle and user/profile/basic are dual-versioned but we stay on v2
+// for consistency.
+const BASE = "https://api.prod.whoop.com/developer/v2";
 
 async function call<T>(path: string): Promise<T> {
 	const token = await getWhoopAccessToken();
