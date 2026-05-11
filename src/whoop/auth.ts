@@ -8,6 +8,7 @@ interface CachedToken {
 }
 
 let accessCache: CachedToken | null = null;
+let inFlightRefresh: Promise<string> | null = null;
 const REFRESH_MARGIN_MS = 60_000;
 
 const TOKEN_URL = "https://api.prod.whoop.com/oauth/oauth2/token";
@@ -61,10 +62,7 @@ function currentRefreshToken(): string | undefined {
 	return fromEnv || undefined;
 }
 
-export async function getWhoopAccessToken(): Promise<string> {
-	const now = Date.now();
-	if (accessCache && accessCache.expiresAt - REFRESH_MARGIN_MS > now) return accessCache.accessToken;
-
+async function doRefresh(): Promise<string> {
 	const clientId = process.env.WHOOP_CLIENT_ID;
 	const clientSecret = process.env.WHOOP_CLIENT_SECRET;
 	const refreshToken = currentRefreshToken();
@@ -97,9 +95,22 @@ export async function getWhoopAccessToken(): Promise<string> {
 	}
 	accessCache = {
 		accessToken: json.access_token,
-		expiresAt: now + json.expires_in * 1000,
+		expiresAt: Date.now() + json.expires_in * 1000,
 	};
 	return accessCache.accessToken;
+}
+
+export async function getWhoopAccessToken(): Promise<string> {
+	const now = Date.now();
+	if (accessCache && accessCache.expiresAt - REFRESH_MARGIN_MS > now) return accessCache.accessToken;
+	// Dedupe concurrent refreshes — WHOOP single-uses refresh tokens, so if N
+	// callers race past the cache check before any of them has refreshed, only
+	// one would succeed and the rest would 400 on a now-consumed token.
+	if (inFlightRefresh) return inFlightRefresh;
+	inFlightRefresh = doRefresh().finally(() => {
+		inFlightRefresh = null;
+	});
+	return inFlightRefresh;
 }
 
 export function whoopConfigured(): boolean {
