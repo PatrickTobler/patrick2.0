@@ -78,6 +78,47 @@ export function setMcpToolsForScheduled(tools: AgentTool<any>[]): void {
 // without bloating the prompt. ~25 actions ≈ a few full runs.
 const PRIOR_ACTIONS_LIMIT = 25;
 
+// Separately pull the most-recent N Telegram sends from this schedule and surface them
+// verbatim. Routine-heavy schedules (e.g. email triage) can produce 30-50 actions per run,
+// pushing earlier sends out of the PRIOR_ACTIONS_LIMIT window — so we always keep at least
+// this many of the most recent pings visible for dedup.
+const PRIOR_TELEGRAMS_LIMIT = 15;
+
+async function formatPriorTelegrams(scheduleId: number): Promise<string> {
+	let rows: ActionRow[] = [];
+	try {
+		rows = await listActionsByToolPrefix(`cron:${scheduleId}:send_telegram_`, PRIOR_TELEGRAMS_LIMIT);
+	} catch {
+		return "";
+	}
+	if (rows.length === 0) return "";
+	const lines = rows
+		.slice()
+		.reverse() // oldest → newest reads naturally
+		.map((a) => {
+			const ts = a.created_at.toISOString().replace("T", " ").slice(0, 16);
+			const tool = a.tool.replace(`cron:${scheduleId}:`, "");
+			let body = "";
+			try {
+				const inp = typeof a.input === "string" ? JSON.parse(a.input) : a.input;
+				body = (inp as { text?: string; caption?: string }).text ?? (inp as { caption?: string }).caption ?? "";
+				body = body.replace(/\s+/g, " ").trim();
+				if (body.length > 280) body = `${body.slice(0, 280)}…`;
+			} catch {
+				// best-effort
+			}
+			return `- ${ts} ${tool}: ${body}`;
+		});
+	return [
+		"## Recent Telegram pings sent by this schedule",
+		"This is the verbatim list of Telegram messages this schedule has sent recently.",
+		"Do NOT send the same message again — even paraphrased — for the same underlying email/event.",
+		"If a topic appears here, Patrick already knows about it; stay silent on that one.",
+		"",
+		lines.join("\n"),
+	].join("\n");
+}
+
 function formatPriorRuns(scheduleId: number, actions: ActionRow[]): string {
 	if (actions.length === 0) return "";
 	const lines = actions
@@ -130,7 +171,11 @@ export async function runScheduledPrompt(scheduleId: number, prompt: string): Pr
 		log.warn({ err, scheduleId }, "scheduled prior-runs load failed");
 	}
 
-	const promptedText = [recall, priorRunsBlock, prompt].filter((s) => s && s.trim().length > 0).join("\n\n");
+	const priorTelegramsBlock = await formatPriorTelegrams(scheduleId);
+
+	const promptedText = [recall, priorTelegramsBlock, priorRunsBlock, prompt]
+		.filter((s) => s && s.trim().length > 0)
+		.join("\n\n");
 
 	const pendingActionByToolCallId = new Map<string, number>();
 	let telegramSent = false;
