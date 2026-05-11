@@ -1,69 +1,63 @@
 ---
 name: whoop
-description: Pull Patrick's WHOOP daily stats (sleep, HRV, RHR, recovery, strain, steps, weight, workouts, healthspan) via the local `whoop` CLI. Use for "what's my WHOOP recovery", "how did I sleep", "HRV trend", "yesterday's strain", the daily WHOOP cron, or any health-data question.
+description: Pull Patrick's WHOOP daily stats (sleep, HRV, RHR, recovery, strain, sleep stages, workouts) via the official WHOOP Developer API. Use for "what's my recovery", "how did I sleep", "HRV trend", "yesterday's strain", the daily WHOOP cron, or any health-data question.
 ---
 
-# WHOOP — daily stats via the `whoop` CLI
+# WHOOP — daily stats via the official Developer API
 
-## Auth
+## How auth works
 
-`WHOOP_EMAIL` and `WHOOP_PASSWORD` env vars hold Patrick's WHOOP credentials. The CLI re-auths against `api.prod.whoop.com` (Cognito) on every invocation — no token cache to worry about. If a call fails with an auth error, ask Patrick to verify the credentials are set in Railway env.
+Three env vars on Railway, configured via OAuth (no raw user password ever stored):
+- `WHOOP_CLIENT_ID` + `WHOOP_CLIENT_SECRET` — registered app at developer.whoop.com
+- `WHOOP_REFRESH_TOKEN` — long-lived refresh token from the one-time consent flow
 
-## The binary
+The bot auto-refreshes the access token in memory; nothing for you to do at runtime.
 
-`/usr/local/bin/whoop` — single static binary, no runtime deps. Run via the `run_shell` tool.
+If `WHOOP_REFRESH_TOKEN` ever expires or gets revoked, tell Patrick — he re-runs `npx tsx scripts/whoop-oauth.ts` locally, gets a fresh refresh token, sets it on Railway.
 
-## Commands
+## Tool
 
-```bash
-whoop stats                          # today (Zurich), default human-readable text
-whoop stats --json                   # today as structured JSON
-whoop stats --date 2026-05-10 --json # specific date as JSON (UTC date string)
+Use the agent tool **`get_whoop_stats`** — it returns a clean structured summary for one date:
+
+```
+get_whoop_stats(date="YYYY-MM-DD")
 ```
 
-**Use `--json` for any agentic reasoning** — the text mode is human-formatted and lossy.
+The date is treated as a local-day window (00:00:00–23:59:59 UTC of that date as the query range; WHOOP returns records overlapping that window). Use `current_time` to get today's Zurich date first.
 
-Default date is "today in the container's local time" which on Railway is **UTC**, not Zurich. For Patrick-facing reports, pass `--date` explicitly using `current_time` to get the Europe/Zurich date.
+## JSON shape (in tool result `details`)
 
-## JSON shape (top-level keys)
+```
+{
+  date: "2026-05-11",
+  recovery: { score, hrv_ms, rhr_bpm, spo2_pct, skin_temp_c },
+  sleep:    { score_pct, efficiency_pct, consistency_pct, performance_pct,
+              respiratory_rate, stages_min:{rem,deep,light,awake},
+              duration_min, needed_min, start, end },
+  cycle:    { strain, avg_hr, max_hr, kilojoule, start, end },
+  workouts: [{ sport_id, strain, start, end, duration_min }, ...]
+}
+```
 
-- `date` — YYYY-MM-DD requested
-- `day.{start, end}` — ISO timestamps for the WHOOP day window
-- `sleep` — `{score, hours, hoursVsNeeded, hoursNeeded, hours30dAvg, efficiency, efficiency30dAvg, consistency, consistency30dAvg, rhr:{value,avg30d}, hrv:{value,avg30d}, bedTime, wakeTime, stages:{rem,deep,light}}`
-- `steps` — `{value, avg30d}`
-- `weight` — `{value, avg30d}` (in lbs/kg as WHOOP returns)
-- `vo2Max` — `{value, avg30d}` (when available)
-- `workouts` — array of `{name, start, end, duration}`
-- `healthspan` — `{date, whoopAge, previous:{whoopAge, paceOfAging}, paceOfAging, yearsDifference, nextUpdate}`
+Any field can be `null` when WHOOP hasn't scored the day yet (common mid-morning before Patrick syncs).
 
-Any field can be `null` if WHOOP hasn't computed it yet for that day (common for "today" mid-day).
+## Hard "do not"s
+
+- **Never** try to fetch `app-internal.whoop.com/*` — that interface is dead from Railway (Cloudflare WAF blocks data-center IPs)
+- **Never** invoke a local `whoop` binary — there isn't one in the container anymore
+- **Never** ask Patrick for his WHOOP email/password — the OAuth refresh token handles auth
 
 ## Patterns
 
-**Morning recovery check**
-```bash
-whoop stats --json
-```
-Read `sleep.hrv.value` vs `sleep.hrv.avg30d`, `sleep.rhr.value` vs `sleep.rhr.avg30d`, `sleep.score`, sleep hours vs needed.
+**Morning recovery check** — call `get_whoop_stats` with today's Zurich date, read recovery.score, sleep.score_pct, sleep.hrv_ms, sleep.rhr_bpm.
 
-**Yesterday's strain + workout**
-```bash
-DATE=$(date -d "yesterday" +%Y-%m-%d)
-whoop stats --date $DATE --json
-```
-(For "yesterday in Zurich" pass that exact date from `current_time`.)
+**Yesterday's strain + workouts** — call with yesterday's Zurich date, read cycle.strain and workouts[].
 
-**7-day trend chart** (daily WHOOP cron, schedule 8)
-Loop over the last 7 dates (Zurich), call `whoop stats --date YYYY-MM-DD --json` per day, extract `sleep.score`, `sleep.hrv.value`, plus `day.start` for x-axis labels, hand to QuickChart.
+**7-day chart** (schedule 8) — loop the last 7 Zurich dates, call `get_whoop_stats` per day, plot sleep.score_pct / sleep.hrv_ms / cycle.strain via QuickChart.
 
-## When NOT to use
+## Errors the tool surfaces
 
-- Real-time / live data — WHOOP API is "yesterday's recovery available this morning" sort of cadence; today's recovery only appears once Patrick wakes up
-- Long historical pulls — the CLI is one-day-at-a-time, so don't loop 90 days; if Patrick wants long history, escalate
-
-## Errors
-
-- `Missing WHOOP_EMAIL` / `Missing WHOOP_PASSWORD` → env vars not set on Railway; tell Patrick
-- `Login failed: 401` → wrong credentials; tell Patrick
-- `Login failed: 5xx` → WHOOP outage; retry once, otherwise note "WHOOP unreachable" and continue
-- All other failures → report verbatim, don't retry silently
+- `not_configured` → one of the three env vars missing; tell Patrick
+- `WHOOP API 401 ...` → refresh token expired/revoked; tell Patrick to re-run the OAuth helper
+- `WHOOP API 429 ...` → rate limit (rare); retry once with backoff or skip the day
+- Any other → report verbatim, don't retry silently

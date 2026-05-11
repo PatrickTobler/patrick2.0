@@ -28,6 +28,7 @@ import { thinkingTools } from "./tools/thinking.ts";
 import { timeTools } from "./tools/time.ts";
 // Native todos disabled — Patrick uses Linear (via MCP) instead.
 import { vaultTools } from "./tools/vault.ts";
+import { whoopTools } from "./tools/whoop.ts";
 
 const SCHEDULED_BANNER = `
 You are running on a schedule — Patrick did NOT just message you. This is autonomous time.
@@ -147,6 +148,7 @@ export async function runScheduledPrompt(scheduleId: number, prompt: string): Pr
 				...vaultTools,
 				...calendarTools,
 				...gmailTools,
+				...whoopTools,
 				...telegramTools,
 				...shellTools,
 				...skillTools,

@@ -31,6 +31,7 @@ import { timeTools } from "./tools/time.ts";
 // Native todos disabled — Patrick uses Linear instead. Keep the table for historical data;
 // re-add `todoTools` here if we ever want them back.
 import { vaultTools } from "./tools/vault.ts";
+import { whoopTools } from "./tools/whoop.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: tool schema generic erased at runtime
 let mcpTools: AgentTool<any>[] = [];
@@ -167,6 +168,7 @@ export async function handleUserMessage(args: {
 				...vaultTools,
 				...calendarTools,
 				...gmailTools,
+				...whoopTools,
 				...scheduleTools,
 				...shellTools,
 				...skillTools,
