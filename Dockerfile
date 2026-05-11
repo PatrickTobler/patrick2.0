@@ -62,6 +62,21 @@ RUN chmod +x /usr/local/bin/sc \
     && chmod +x /usr/local/lib/sc-real \
     && rm -rf /tmp/sc.tar.gz "/tmp/sc-${SC_VERSION}-linux-x86_64-gnu"
 
+# WHOOP CLI (https://github.com/MuinMomin/whoop-cli) — Bun-based TS source,
+# only macOS arm64 binary is published, so we compile to Linux x86_64 here.
+# Auth: reads WHOOP_EMAIL / WHOOP_PASSWORD env at runtime; no token cache on
+# disk (each invocation re-auths via Cognito).
+ARG WHOOP_CLI_VERSION=v0.1.3
+ENV BUN_INSTALL=/opt/bun
+RUN curl -fsSL https://bun.sh/install | bash \
+    && git clone --depth 1 --branch ${WHOOP_CLI_VERSION} https://github.com/MuinMomin/whoop-cli.git /tmp/whoop-cli \
+    && cd /tmp/whoop-cli \
+    && /opt/bun/bin/bun install --frozen-lockfile \
+    && /opt/bun/bin/bun build --compile --target=bun-linux-x64 \
+        --no-compile-autoload-dotenv ./index.ts --outfile /usr/local/bin/whoop \
+    && chmod +x /usr/local/bin/whoop \
+    && rm -rf /tmp/whoop-cli /opt/bun
+
 # The CLI + agent-browser store state under $HOME. Point HOME at the Railway
 # volume so auth state + Chrome binary + Reddit session cookies persist across
 # deploys.
