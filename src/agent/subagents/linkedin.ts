@@ -19,6 +19,13 @@ import { runSubagent } from "./runner.ts";
 // Telegram), the context persists and subsequent runs are already logged in.
 
 const CONTEXT_ID_FILE = path.join(process.env.HOME ?? "/data/home", ".linkedin-browserbase-context-id");
+// When the subagent gets blocked on 2FA, we persist the live session ID +
+// connectUrl here so the next invocation (with the code) can reuse the same
+// session that already has credentials submitted + the 2FA prompt visible.
+// Without this, session 1 dies in the finally{} block and session 2 starts
+// from scratch — only as good as whatever cookies got persisted to the
+// Browserbase context, which is often not enough mid-2FA.
+const SESSION_HANDOFF_FILE = path.join(process.env.HOME ?? "/data/home", ".linkedin-bb-session-handoff");
 const BB_API = "https://api.browserbase.com/v1";
 
 interface BrowserbaseSession {
@@ -58,6 +65,14 @@ async function createSession(apiKey: string, projectId: string, contextId: strin
 		headers: { "X-BB-API-Key": apiKey, "Content-Type": "application/json" },
 		body: JSON.stringify({
 			projectId,
+			// 30-min session — needs to span the LinkedIn login + 2FA + Patrick's
+			// reply window (the project default is 300s = 5min which is too short
+			// for a multi-step login that requires asking Patrick for the code).
+			timeout: 1800,
+			// keepAlive: true keeps the session alive even when the CDP WebSocket
+			// disconnects between agent-browser calls. Without this, each
+			// agent-browser command-then-disconnect cycle risks ending the session.
+			keepAlive: true,
 			browserSettings: {
 				context: { id: contextId, persist: true },
 			},
@@ -84,6 +99,53 @@ async function releaseSession(apiKey: string, sessionId: string): Promise<void> 
 		});
 	} catch (err) {
 		log.warn({ err, sessionId }, "Browserbase release-session failed");
+	}
+}
+
+interface SavedSession {
+	sessionId: string;
+	connectUrl: string;
+	savedAt: number;
+}
+
+async function readSavedSession(): Promise<SavedSession | null> {
+	try {
+		const raw = await fs.readFile(SESSION_HANDOFF_FILE, "utf-8");
+		return JSON.parse(raw) as SavedSession;
+	} catch {
+		return null;
+	}
+}
+
+async function saveSession(s: BrowserbaseSession): Promise<void> {
+	try {
+		await fs.mkdir(path.dirname(SESSION_HANDOFF_FILE), { recursive: true });
+		await fs.writeFile(
+			SESSION_HANDOFF_FILE,
+			JSON.stringify({ sessionId: s.id, connectUrl: s.connectUrl, savedAt: Date.now() } satisfies SavedSession),
+			"utf-8",
+		);
+	} catch (err) {
+		log.warn({ err }, "linkedin session handoff persist failed");
+	}
+}
+
+async function clearSavedSession(): Promise<void> {
+	try {
+		await fs.unlink(SESSION_HANDOFF_FILE);
+	} catch {
+		// not present, fine
+	}
+}
+
+async function sessionStillAlive(apiKey: string, sessionId: string): Promise<boolean> {
+	try {
+		const resp = await fetch(`${BB_API}/sessions/${sessionId}`, { headers: { "X-BB-API-Key": apiKey } });
+		if (!resp.ok) return false;
+		const data = (await resp.json()) as { status?: string };
+		return data.status === "RUNNING";
+	} catch {
+		return false;
 	}
 }
 
@@ -235,10 +297,23 @@ export function makeLinkedinSubagentTool(): AgentTool<typeof Schema> {
 			}
 
 			let session: BrowserbaseSession | null = null;
+			let reusedExisting = false;
 			try {
-				const contextId = await ensureContextId(bbKey, bbProject);
-				session = await createSession(bbKey, bbProject, contextId);
-				log.info({ sessionId: session.id, contextId }, "Browserbase session created for LinkedIn subagent");
+				// If a previous invocation got blocked on 2FA and saved its session, try
+				// to reuse it — that's the only way the 2FA-code-comes-in-a-later-message
+				// flow works (the live page still has credentials submitted + the 2FA
+				// prompt waiting). If the saved session is dead, fall through to creating fresh.
+				const saved = await readSavedSession();
+				if (saved && (await sessionStillAlive(bbKey, saved.sessionId))) {
+					session = { id: saved.sessionId, connectUrl: saved.connectUrl };
+					reusedExisting = true;
+					log.info({ sessionId: session.id }, "LinkedIn subagent reusing saved Browserbase session");
+				} else {
+					if (saved) await clearSavedSession();
+					const contextId = await ensureContextId(bbKey, bbProject);
+					session = await createSession(bbKey, bbProject, contextId);
+					log.info({ sessionId: session.id, contextId }, "Browserbase session created for LinkedIn subagent");
+				}
 			} catch (err) {
 				return {
 					content: [
@@ -272,7 +347,21 @@ export function makeLinkedinSubagentTool(): AgentTool<typeof Schema> {
 					toolCalls: [] as { name: string; isError: boolean }[],
 				}));
 
-				const summary = `LinkedIn subagent done in ${result.turns} turns, ${result.toolCalls.length} tool calls (bb session ${session.id}).\n\n${result.finalText || "(no output)"}`;
+				// 2FA handoff: if the subagent blocked specifically on 2FA, keep the
+				// session alive (keepAlive: true on creation makes that work for ~30 min
+				// per the timeout) and persist its id so the NEXT invocation
+				// (with the code) reuses it. For any other outcome — success, error,
+				// other blocker — release the session and clear any stale handoff.
+				const finalText = result.finalText ?? "";
+				const isTwoFactorBlock = /Blocked\s*[—-]\s*LinkedIn 2FA challenge/i.test(finalText);
+				if (isTwoFactorBlock) {
+					await saveSession(session);
+				} else {
+					await clearSavedSession();
+					await releaseSession(bbKey, session.id);
+				}
+
+				const summary = `LinkedIn subagent done in ${result.turns} turns, ${result.toolCalls.length} tool calls (bb session ${session.id}${reusedExisting ? ", reused" : ""}).\n\n${result.finalText || "(no output)"}`;
 				return {
 					content: [{ type: "text", text: summary }],
 					details: {
@@ -280,10 +369,15 @@ export function makeLinkedinSubagentTool(): AgentTool<typeof Schema> {
 						toolCalls: result.toolCalls.length,
 						errors: result.toolCalls.filter((c) => c.isError).length,
 						bbSessionId: session.id,
+						reusedSession: reusedExisting,
+						handoffSaved: isTwoFactorBlock,
 					},
 				};
-			} finally {
+			} catch (err) {
+				// On unexpected throw, always release + clear handoff
+				await clearSavedSession();
 				await releaseSession(bbKey, session.id);
+				throw err;
 			}
 		},
 	};
