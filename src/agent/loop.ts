@@ -8,6 +8,7 @@ import { log } from "../log.ts";
 import { ingestFactsFromMessage } from "./facts.ts";
 import { buildRecallContext, buildStableSystemPrompt, withRecall } from "./memory-context.ts";
 import { makeCoderSubagentTool } from "./subagents/coder.ts";
+import { makeLinkedinSubagentTool } from "./subagents/linkedin.ts";
 import {
 	duneSubagentSpec,
 	githubSubagentSpec,
@@ -184,6 +185,7 @@ export async function handleUserMessage(args: {
 				makeMcpDomainSubagent(webSubagentSpec, () => mcpTools),
 				makeMoltbookSubagentTool(),
 				makeRedditSubagentTool(),
+				makeLinkedinSubagentTool(),
 			],
 			messages: history,
 		},

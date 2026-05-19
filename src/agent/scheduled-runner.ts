@@ -7,6 +7,7 @@ import { log } from "../log.ts";
 import { ingestFactsFromMessage } from "./facts.ts";
 import { buildRecallContext, buildStableSystemPrompt } from "./memory-context.ts";
 import { makeCoderSubagentTool } from "./subagents/coder.ts";
+import { makeLinkedinSubagentTool } from "./subagents/linkedin.ts";
 import {
 	duneSubagentSpec,
 	githubSubagentSpec,
@@ -207,6 +208,7 @@ export async function runScheduledPrompt(scheduleId: number, prompt: string): Pr
 				makeMcpDomainSubagent(duneSubagentSpec, () => mcpToolsRef),
 				makeMcpDomainSubagent(webSubagentSpec, () => mcpToolsRef),
 				makeMoltbookSubagentTool(),
+				makeLinkedinSubagentTool(),
 			],
 			messages: [],
 		},
