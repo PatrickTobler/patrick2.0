@@ -40,13 +40,13 @@ RUN npm install -g @masumi_network/masumi-agent-messenger@latest || true
 # agent-browser CLI (Reddit + LinkedIn subagents drive this). Chrome itself is
 # downloaded on first boot into the /data volume so it survives redeploys.
 #
-# PINNED to 0.26.0 — 0.27.0 (latest at time of writing) regressed the
-# Browserbase CDP launch path: every `--cdp wss://...browserbase.com/...`
-# call fails with "Auto-launch failed: CDP WebSocket connect failed:
-# HTTP error: 410 Gone" even though the underlying session is healthy
-# (raw WS connect succeeds against the same URL). 0.26.0 works.
-# Re-evaluate when a 0.27.x patch ships.
-RUN npm install -g agent-browser@0.26.0 || true
+# PINNED to 0.25.5. Both 0.26.0 and 0.27.0 regressed the Browserbase
+# CDP-via-URL launch path: every `--cdp wss://...browserbase.com/...` call
+# fails with "Auto-launch failed: CDP WebSocket connect failed: HTTP error:
+# 410 Gone" even though the underlying session is healthy (raw WebSocket
+# connect succeeds against the same URL). 0.25.5 is the last good version.
+# Re-evaluate when a 0.26.x / 0.27.x patch fixes the launcher.
+RUN npm install -g agent-browser@0.25.5 || true
 
 # Scalable Capital CLI (`sc`) — used by the scalable skill for READ-ONLY broker
 # queries (overview, transactions, holdings). Auth tokens persist on the
