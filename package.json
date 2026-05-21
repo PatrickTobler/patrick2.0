@@ -27,6 +27,7 @@
 		"node-pg-migrate": "^7.6.0",
 		"pg": "^8.13.0",
 		"pino": "^9.5.0",
+		"playwright-core": "^1.60.0",
 		"yaml": "^2.8.3"
 	},
 	"devDependencies": {
