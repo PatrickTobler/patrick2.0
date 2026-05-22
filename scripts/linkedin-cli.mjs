@@ -119,13 +119,30 @@ async function bbReleaseSession(apiKey, sessionId) {
 }
 
 // --- Get a Playwright browser+page, reusing saved session if available ---
+//
+// Strategy: ALWAYS try to reuse a saved session. Only force a fresh one when
+// the caller explicitly asks (e.g. they're trying to clear stuck state). After
+// any successful op, the caller persists the session via persistSession() —
+// so e.g. `login` followed by `inbox` 60 seconds later runs entirely inside
+// one Browserbase session that's already on the feed.
+//
+// Sessions auto-die when their 30-min timeout elapses (we set timeout: 1800
+// + keepAlive: true). At that point bbSessionAlive returns false on the next
+// call and we transparently spin up a fresh one (cookies from the persistent
+// Browserbase context survive across sessions).
 
 async function obtainBrowser(apiKey, projectId, opts = { forceFresh: false }) {
 	if (!opts.forceFresh) {
 		const saved = readJsonFile(HANDOFF_FILE);
 		if (saved?.sessionId && (await bbSessionAlive(apiKey, saved.sessionId))) {
-			const browser = await chromium.connectOverCDP(saved.connectUrl);
-			return { browser, session: saved, reused: true };
+			try {
+				const browser = await chromium.connectOverCDP(saved.connectUrl);
+				return { browser, session: saved, reused: true };
+			} catch {
+				// Saved session ID is alive per the API but CDP connect failed —
+				// likely the connectUrl's signing key expired even though the session
+				// hasn't timed out. Fall through to a fresh session.
+			}
 		}
 		if (saved) tryUnlink(HANDOFF_FILE);
 	}
@@ -133,6 +150,14 @@ async function obtainBrowser(apiKey, projectId, opts = { forceFresh: false }) {
 	const session = await bbCreateSession(apiKey, projectId, contextId);
 	const browser = await chromium.connectOverCDP(session.connectUrl);
 	return { browser, session, reused: false };
+}
+
+function persistSession(session) {
+	writeJsonFileAtomic(HANDOFF_FILE, {
+		sessionId: session.id ?? session.sessionId,
+		connectUrl: session.connectUrl,
+		savedAt: Date.now(),
+	});
 }
 
 async function defaultPage(browser) {
@@ -168,14 +193,26 @@ function parseArgs(argv) {
 // --- LinkedIn flows ---
 
 async function isLoggedIn(page) {
-	// Best signal: messaging icon is in the nav. We check via accessibility role
-	// "link" with name containing "Messaging". On the feed/home, this is reliable.
-	try {
-		await page.waitForSelector('a[href*="/messaging/"]', { timeout: 5000 });
-		return true;
-	} catch {
-		return false;
+	// Multiple positive signals. Each tried with a short timeout — we want this
+	// fast on either outcome. If none match within ~10s total, treat as not
+	// logged in.
+	const signals = [
+		'a[href*="/messaging/"]',
+		'a[href*="/feed/"]',
+		'.global-nav__me, button[data-control-name="nav.settings_signout"]',
+	];
+	for (const sel of signals) {
+		try {
+			await page.waitForSelector(sel, { timeout: 3500 });
+			return true;
+		} catch {
+			// next signal
+		}
 	}
+	// Also: if we're on /login or /uas/login we're definitely NOT logged in
+	const url = page.url();
+	if (/login|checkpoint|challenge|uas\//.test(url)) return false;
+	return false;
 }
 
 async function detectChallenge(page) {
@@ -227,29 +264,27 @@ async function submitTwoFactorCode(page, code) {
 }
 
 async function cmdLogin(apiKey, projectId, email, password, twoFaCode) {
-	const { browser, session, reused } = await obtainBrowser(apiKey, projectId, { forceFresh: !twoFaCode });
-	let releaseOnExit = true;
+	// For login WITHOUT a 2FA code: try reuse first (cookies might have us
+	// already logged in). For login WITH a 2FA code: MUST reuse — the saved
+	// session is on the 2FA prompt waiting.
+	const forceFresh = false;
+	const { browser, session, reused } = await obtainBrowser(apiKey, projectId, { forceFresh });
+	let outcome = "unknown";
 	try {
 		const page = await defaultPage(browser);
 
-		// If reusing a session AND we have a 2FA code, the page should already be
-		// on the challenge — just submit the code. Otherwise, do a fresh login.
 		if (twoFaCode && reused) {
-			// Make sure we're still on a challenge page
 			const ch = await detectChallenge(page);
 			if (ch?.kind === "2fa") {
 				await submitTwoFactorCode(page, twoFaCode);
 			} else {
-				// Saved session is past the 2FA somehow — try to navigate to feed
 				await page.goto("https://www.linkedin.com/feed/", { waitUntil: "domcontentloaded" }).catch(() => {});
 			}
 		} else {
-			// Fresh login path: check current state first (might already be logged in via context cookies)
 			await page.goto("https://www.linkedin.com/feed/", { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => {});
 			if (!(await isLoggedIn(page))) {
 				await submitLoginCredentials(page, email, password);
 				if (twoFaCode) {
-					// User passed --code on a fresh-session call; try submitting it on the challenge page
 					const ch = await detectChallenge(page);
 					if (ch?.kind === "2fa") await submitTwoFactorCode(page, twoFaCode);
 				}
@@ -257,31 +292,46 @@ async function cmdLogin(apiKey, projectId, email, password, twoFaCode) {
 		}
 
 		if (await isLoggedIn(page)) {
-			tryUnlink(HANDOFF_FILE);
-			out({ status: "ok", action: "login", logged_in: true, reused });
+			// Persist this session so subsequent calls (inbox, send, etc.) can
+			// reuse the already-logged-in browser instead of creating a new one
+			// and re-checking cookies.
+			persistSession(session);
+			outcome = "ok";
+			out({ status: "ok", action: "login", logged_in: true, reused, sessionId: session.id });
 			return;
 		}
 
 		const ch = await detectChallenge(page);
 		if (ch?.kind === "2fa") {
-			writeJsonFileAtomic(HANDOFF_FILE, { sessionId: session.id, connectUrl: session.connectUrl, savedAt: Date.now() });
-			releaseOnExit = false;
+			// Session is on the 2FA prompt — persist so the next call's --code
+			// lands on the same page.
+			persistSession(session);
+			outcome = "blocked-2fa";
 			out({ status: "blocked", reason: "2fa", message: "LinkedIn 2FA challenge — pass --code <6-digit> on the next call to continue." });
 			return;
 		}
 		if (ch?.kind === "unusual") {
+			outcome = "blocked-unusual";
 			out({ status: "blocked", reason: "unusual-signin", message: "LinkedIn 'unusual sign-in' verification — Patrick must complete one manual login from his usual browser first." });
 			return;
 		}
+		outcome = "blocked-unknown";
 		out({ status: "blocked", reason: "unknown", message: `Did not land on feed and no 2FA prompt detected. URL=${page.url()}` });
 	} finally {
 		await browser.close().catch(() => {});
-		if (releaseOnExit) await bbReleaseSession(apiKey, session.id);
+		// Only release the session if we DEFINITELY can't reuse it later
+		// (unusual-signin or unknown blocker). For "ok" and "blocked-2fa" we
+		// already persisted via persistSession() and want the session alive.
+		if (outcome === "blocked-unusual" || outcome === "blocked-unknown") {
+			tryUnlink(HANDOFF_FILE);
+			await bbReleaseSession(apiKey, session.id);
+		}
 	}
 }
 
 async function cmdInbox(apiKey, projectId) {
 	const { browser, session } = await obtainBrowser(apiKey, projectId);
+	let ok = false;
 	try {
 		const page = await defaultPage(browser);
 		await page.goto("https://www.linkedin.com/messaging/", { waitUntil: "domcontentloaded", timeout: 30000 });
@@ -290,7 +340,6 @@ async function cmdInbox(apiKey, projectId) {
 			return;
 		}
 		await page.waitForSelector(".msg-conversations-container__convo-item", { timeout: 15000 }).catch(() => {});
-		// Pull unread threads — LinkedIn marks unread rows with a dot indicator class
 		const threads = await page.evaluate(() => {
 			const items = Array.from(document.querySelectorAll(".msg-conversations-container__convo-item"));
 			return items.slice(0, 30).map((el) => {
@@ -302,16 +351,23 @@ async function cmdInbox(apiKey, projectId) {
 			});
 		});
 		const unread = threads.filter((t) => t.unread);
+		ok = true;
 		out({ status: "ok", action: "inbox", total_visible: threads.length, unread_count: unread.length, unread });
 	} finally {
 		await browser.close().catch(() => {});
-		await bbReleaseSession(apiKey, session.id);
+		if (ok) {
+			persistSession(session);
+		} else {
+			tryUnlink(HANDOFF_FILE);
+			await bbReleaseSession(apiKey, session.id);
+		}
 	}
 }
 
 async function cmdThread(apiKey, projectId, name) {
 	if (!name) throw new Error("--name required");
 	const { browser, session } = await obtainBrowser(apiKey, projectId);
+	let ok = false;
 	try {
 		const page = await defaultPage(browser);
 		await page.goto("https://www.linkedin.com/messaging/", { waitUntil: "domcontentloaded", timeout: 30000 });
@@ -319,7 +375,6 @@ async function cmdThread(apiKey, projectId, name) {
 			out({ status: "blocked", reason: "not-logged-in", message: "Run login first." });
 			return;
 		}
-		// Click the convo with the matching participant name
 		const convo = page
 			.locator(".msg-conversations-container__convo-item")
 			.filter({ hasText: name })
@@ -334,10 +389,15 @@ async function cmdThread(apiKey, projectId, name) {
 				body: el.querySelector(".msg-s-event-listitem__body")?.textContent?.trim() || "",
 			}));
 		});
+		ok = true;
 		out({ status: "ok", action: "thread", participant: name, messages });
 	} finally {
 		await browser.close().catch(() => {});
-		await bbReleaseSession(apiKey, session.id);
+		if (ok) persistSession(session);
+		else {
+			tryUnlink(HANDOFF_FILE);
+			await bbReleaseSession(apiKey, session.id);
+		}
 	}
 }
 
@@ -345,6 +405,7 @@ async function cmdSend(apiKey, projectId, name, text) {
 	if (!name) throw new Error("--name required");
 	if (!text) throw new Error("--text required");
 	const { browser, session } = await obtainBrowser(apiKey, projectId);
+	let ok = false;
 	try {
 		const page = await defaultPage(browser);
 		await page.goto("https://www.linkedin.com/messaging/", { waitUntil: "domcontentloaded", timeout: 30000 });
@@ -360,15 +421,18 @@ async function cmdSend(apiKey, projectId, name, text) {
 		const composer = page.locator(".msg-form__contenteditable").first();
 		await composer.click({ timeout: 10000 });
 		await composer.type(text, { delay: 20 });
-		// Click Send (LinkedIn's send button is role=button name=Send)
 		const sendBtn = page.locator('button:has-text("Send"), button[aria-label*="Send"]').first();
 		await sendBtn.click({ timeout: 5000 });
-		// Wait for the message to appear in the thread
 		await page.waitForTimeout(2000);
+		ok = true;
 		out({ status: "ok", action: "send", to: name, preview: text.slice(0, 80) });
 	} finally {
 		await browser.close().catch(() => {});
-		await bbReleaseSession(apiKey, session.id);
+		if (ok) persistSession(session);
+		else {
+			tryUnlink(HANDOFF_FILE);
+			await bbReleaseSession(apiKey, session.id);
+		}
 	}
 }
 
