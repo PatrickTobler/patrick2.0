@@ -53,6 +53,7 @@ export function makeCoderSubagentTool(getMcpTools: () => AgentTool[]): AgentTool
 				model: chooseModel("coding", cfg.openrouterApiKey),
 				tools: [...githubTools, ...fetchTools, ...vaultTools, ...factTools],
 				prompt: task,
+				source: "subagent:coder",
 			});
 
 			const summary = `Coder subagent finished in ${result.turns} turns, ${result.toolCalls.length} tool calls.\n\n${result.finalText || "(no output)"}`;

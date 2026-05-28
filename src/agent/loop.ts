@@ -29,10 +29,12 @@ import { shellTools } from "./tools/shell.ts";
 import { skillTools } from "./tools/skills.ts";
 import { thinkingTools } from "./tools/thinking.ts";
 import { timeTools } from "./tools/time.ts";
+import { usageTools } from "./tools/usage.ts";
 // Native todos disabled — Patrick uses Linear instead. Keep the table for historical data;
 // re-add `todoTools` here if we ever want them back.
 import { vaultTools } from "./tools/vault.ts";
 import { whoopTools } from "./tools/whoop.ts";
+import { recordUsageFromMessages } from "./usage-tracking.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: tool schema generic erased at runtime
 let mcpTools: AgentTool<any>[] = [];
@@ -166,6 +168,7 @@ export async function handleUserMessage(args: {
 				...factTools,
 				...thinkingTools,
 				...timeTools,
+				...usageTools,
 				...vaultTools,
 				...calendarTools,
 				...gmailTools,
@@ -268,6 +271,7 @@ export async function handleUserMessage(args: {
 	// Persist every new message produced this turn (assistant text, tool calls, tool results) — skip
 	// the user message which we already inserted above.
 	const fresh = agent.state.messages.slice(history.length);
+	void recordUsageFromMessages("orchestrator", fresh);
 	for (const m of fresh) {
 		if (m.role === "user") continue; // already persisted
 		await insertMessage({

@@ -1,4 +1,5 @@
-import { streamSimple } from "@mariozechner/pi-ai";
+import { type AssistantMessage, streamSimple } from "@mariozechner/pi-ai";
+import { recordUsageFromMessages } from "../agent/usage-tracking.ts";
 import { getConfig } from "../config.ts";
 import { log } from "../log.ts";
 import { chooseModel } from "./router.ts";
@@ -31,6 +32,7 @@ export async function rerankByRelevance<T extends { id: number | string; text?: 
 	const userMessage = `Query: ${query}\n\nCandidates:\n${lines.join("\n")}\n\nReturn the ${topK} most relevant ids in order, as JSON.`;
 
 	let acc = "";
+	let doneMessage: AssistantMessage | undefined;
 	try {
 		const stream = await streamSimple(
 			model,
@@ -43,7 +45,9 @@ export async function rerankByRelevance<T extends { id: number | string; text?: 
 		);
 		for await (const ev of stream) {
 			if (ev.type === "text_delta") acc += ev.delta;
+			else if (ev.type === "done") doneMessage = ev.message;
 		}
+		if (doneMessage) void recordUsageFromMessages("rerank", [doneMessage]);
 	} catch (err) {
 		log.warn({ err }, "rerank LLM call failed — falling back to original order");
 		return candidates.slice(0, topK);

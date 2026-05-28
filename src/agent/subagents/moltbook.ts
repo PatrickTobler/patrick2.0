@@ -90,6 +90,7 @@ export function makeMoltbookSubagentTool(): AgentTool<typeof Schema> {
 				model: chooseModel("economy", cfg.openrouterApiKey),
 				tools: [...shellTools, ...vaultTools, ...factTools],
 				prompt: task,
+				source: "subagent:moltbook",
 			});
 
 			const summary = `Moltbook subagent done in ${result.turns} turns, ${result.toolCalls.length} tool calls.\n\n${result.finalText || "(no output)"}`;

@@ -4,6 +4,7 @@ import { getConfig } from "./config.ts";
 import { closePool } from "./db/pool.ts";
 import { log } from "./log.ts";
 import { startFactDecayJob, stopFactDecayJob } from "./maintenance/decay.ts";
+import { ensureSeededSchedules } from "./maintenance/seed-schedules.ts";
 import { startMasumiTokenRefresher, stopMasumiTokenRefresher } from "./masumi/auth-refresher.ts";
 import { startMcpBridge, stopMcpBridge } from "./mcp/bridge.ts";
 import { reloadAllSchedules, stopAllSchedules } from "./scheduler/service.ts";
@@ -24,8 +25,9 @@ async function main(): Promise<void> {
 		}
 	})();
 
-	// Boot scheduler — load all enabled schedules from DB and register cron jobs
+	// Boot scheduler — ensure built-in schedules exist, then load all enabled schedules from DB
 	try {
+		await ensureSeededSchedules();
 		const count = await reloadAllSchedules();
 		log.info({ count }, "scheduler ready");
 	} catch (err) {

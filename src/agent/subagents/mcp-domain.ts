@@ -47,6 +47,7 @@ export function makeMcpDomainSubagent(spec: McpDomainSpec, getMcpTools: () => Ag
 				model: chooseModel(spec.modelClass ?? "economy", cfg.openrouterApiKey),
 				tools: scoped,
 				prompt: task,
+				source: `subagent:${spec.toolName}`,
 			});
 
 			const summary = `${spec.label} subagent done in ${result.turns} turns, ${result.toolCalls.length} tool calls.\n\n${result.finalText || "(no output)"}`;

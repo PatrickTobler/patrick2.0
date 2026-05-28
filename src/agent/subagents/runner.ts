@@ -2,6 +2,7 @@ import { Agent, type AgentEvent, type AgentMessage, type AgentTool } from "@mari
 import type { Message, Model } from "@mariozechner/pi-ai";
 import { getConfig } from "../../config.ts";
 import { log } from "../../log.ts";
+import { recordUsageFromMessages } from "../usage-tracking.ts";
 
 export interface SubagentRunOptions {
 	systemPrompt: string;
@@ -10,6 +11,8 @@ export interface SubagentRunOptions {
 	tools: AgentTool<any>[];
 	prompt: string;
 	maxTurnsHint?: number;
+	/** Usage-tracking label, e.g. "subagent:reddit". Defaults to "subagent". */
+	source?: string;
 }
 
 export interface SubagentResult {
@@ -51,6 +54,8 @@ export async function runSubagent(opts: SubagentRunOptions): Promise<SubagentRes
 		log.error({ err }, "subagent run failed");
 		throw err;
 	}
+
+	void recordUsageFromMessages(opts.source ?? "subagent", agent.state.messages);
 
 	return {
 		finalText: collectAssistantText(agent.state.messages),

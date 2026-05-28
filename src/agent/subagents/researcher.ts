@@ -47,6 +47,7 @@ export function makeResearcherSubagentTool(getMcpTools: () => AgentTool[]): Agen
 				model: chooseModel("reasoning", cfg.openrouterApiKey),
 				tools: [...fetchTools, ...vaultTools, ...factTools, recallThinkingTool],
 				prompt: question,
+				source: "subagent:researcher",
 			});
 
 			const summary = `Researcher subagent finished in ${result.turns} turns, ${result.toolCalls.length} tool calls.\n\n${result.finalText || "(no output)"}`;

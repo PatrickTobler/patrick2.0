@@ -27,9 +27,11 @@ import { skillTools } from "./tools/skills.ts";
 import { telegramTools } from "./tools/telegram.ts";
 import { thinkingTools } from "./tools/thinking.ts";
 import { timeTools } from "./tools/time.ts";
+import { usageTools } from "./tools/usage.ts";
 // Native todos disabled — Patrick uses Linear (via MCP) instead.
 import { vaultTools } from "./tools/vault.ts";
 import { whoopTools } from "./tools/whoop.ts";
+import { recordUsageFromMessages } from "./usage-tracking.ts";
 
 const SCHEDULED_BANNER = `
 You are running on a schedule — Patrick did NOT just message you. This is autonomous time.
@@ -191,6 +193,7 @@ export async function runScheduledPrompt(scheduleId: number, prompt: string): Pr
 				...factTools,
 				...thinkingTools,
 				...timeTools,
+				...usageTools,
 				...vaultTools,
 				...calendarTools,
 				...gmailTools,
@@ -257,6 +260,8 @@ export async function runScheduledPrompt(scheduleId: number, prompt: string): Pr
 
 	await agent.prompt(promptedText);
 	await agent.waitForIdle();
+
+	void recordUsageFromMessages("scheduled", agent.state.messages);
 
 	const finalText = collectAssistantText(agent.state.messages);
 	return { finalText, telegramSent, toolCallCount };

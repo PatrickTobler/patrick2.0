@@ -1,9 +1,10 @@
 import "@mariozechner/pi-ai";
-import { streamSimple } from "@mariozechner/pi-ai";
+import { type AssistantMessage, streamSimple } from "@mariozechner/pi-ai";
 import { getConfig } from "../config.ts";
 import { upsertFact } from "../db/repos/facts.ts";
 import { chooseModel } from "../llm/router.ts";
 import { log } from "../log.ts";
+import { recordUsageFromMessages } from "./usage-tracking.ts";
 
 const EXTRACTION_PROMPT = `Extract HIGH-SIGNAL stable facts about Patrick from the message below. Be ruthlessly conservative — most messages contain ZERO new facts worth keeping.
 
@@ -33,6 +34,7 @@ export async function extractFacts(message: string): Promise<string[]> {
 	const cfg = getConfig();
 	const model = chooseModel("economy", cfg.openrouterApiKey);
 	let acc = "";
+	let doneMessage: AssistantMessage | undefined;
 	const stream = await streamSimple(
 		model,
 		{
@@ -44,7 +46,9 @@ export async function extractFacts(message: string): Promise<string[]> {
 	);
 	for await (const ev of stream) {
 		if (ev.type === "text_delta") acc += ev.delta;
+		else if (ev.type === "done") doneMessage = ev.message;
 	}
+	if (doneMessage) void recordUsageFromMessages("facts", [doneMessage]);
 	const json = parseJsonLoose(acc);
 	if (!json) {
 		log.warn({ acc }, "fact extractor returned non-json");

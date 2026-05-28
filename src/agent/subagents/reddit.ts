@@ -243,6 +243,7 @@ export function makeRedditSubagentTool(): AgentTool<typeof Schema> {
 						model: chooseModel("economy", cfg.openrouterApiKey),
 						tools: [...shellTools, ...vaultTools, ...factTools],
 						prompt: task,
+						source: "subagent:reddit",
 					}),
 					new Promise<never>((_, reject) =>
 						setTimeout(
