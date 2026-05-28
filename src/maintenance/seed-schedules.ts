@@ -1,4 +1,4 @@
-import { insertSchedule, listSchedules } from "../db/repos/schedules.ts";
+import { insertSchedule, listSchedules, updateSchedule } from "../db/repos/schedules.ts";
 import { log } from "../log.ts";
 
 interface SeededSchedule {
@@ -19,17 +19,16 @@ Keep it to a few lines. No preamble, no markdown headers.`;
 
 const HEPHA_MONITOR_PROMPT = `[hepha-monitor] Daily health check of our Hepha autonomous coding-agent fleet. Only ping me if something needs attention — if everything is healthy, stay silent.
 
-Hepha exposes a read-only HTTP API. Authenticate every request with this header:
-  Authorization: Bearer hepha_mon_c15905342903d6dfdbac88fe10011432fc45ea65f5e75a9a
+Query the read-only Hepha API via the auth-wrapped helper script. It injects the bearer token from the server's environment, so you never see or handle the token. Use run_shell with command "node" and args as a list (the path argument must start with /api/):
 
-Step 1 — list tasks. Use run_shell with command "curl" and args as a list (no shell quoting):
-  ["-s", "-H", "Authorization: Bearer hepha_mon_c15905342903d6dfdbac88fe10011432fc45ea65f5e75a9a", "https://coding-agent-mainnet.up.railway.app/api/tasks"]
-This returns all tasks newest-first. Each has: task_id, status, repo_url, branch_name, pr_number, pr_url, preview_url, total_cost_usd, created_at, updated_at.
+Step 1 — list tasks:
+  ["scripts/hepha-check.mjs", "/api/tasks"]
+Returns all tasks newest-first. Each has: task_id, status, repo_url, branch_name, pr_number, pr_url, preview_url, total_cost_usd, created_at, updated_at.
 
 Step 2 — find problems. A task NEEDS ATTENTION if its status is one of: failed, auth_required, out_of_credits. (status completed WITH a pr_url = healthy finish; pending/running/cancelled = no action.)
 
 Step 3 — for each problem task, fetch its detail + comment thread:
-  ["-s", "-H", "Authorization: Bearer hepha_mon_c15905342903d6dfdbac88fe10011432fc45ea65f5e75a9a", "https://coding-agent-mainnet.up.railway.app/api/tasks/<task_id>?events=true"]
+  ["scripts/hepha-check.mjs", "/api/tasks/<task_id>?events=true"]
 Read the newest entry in events[] (origin COWORKER = the agent, SOKOSUMI = the user) to understand what happened. If the response has eventsError instead of events, Sokosumi was briefly unreachable — note it and move on.
 
 Step 4 — report:
@@ -37,7 +36,7 @@ Step 4 — report:
 - Check the "Previous runs" context above: do NOT re-report a task you already flagged unless its status has changed since.
 - If nothing needs attention, send nothing.
 
-Errors: HTTP 401 = the key was rejected (tell me once). 503 = monitoring not configured on the server (tell me once).`;
+Errors from the helper: "HTTP 401" = the monitoring key was rejected (tell me once). "HTTP 503" = monitoring not configured on the server (tell me once). "HEPHA_MONITOR_TOKEN is not set" = the env var is missing on this deploy (tell me once).`;
 
 const SEEDED: SeededSchedule[] = [
 	{ marker: "[token-usage-report]", cron: "0 21 * * *", timezone: "Europe/Zurich", prompt: TOKEN_USAGE_PROMPT },
@@ -45,9 +44,13 @@ const SEEDED: SeededSchedule[] = [
 ];
 
 /**
- * Idempotently ensure the built-in schedules exist. Matches on a marker substring in the prompt,
- * so a schedule is only (re)created when fully absent — if Patrick later edits or disables one,
- * we leave it alone. Best-effort: failures are logged, never thrown.
+ * Ensure the built-in schedules exist and their prompts match the code. Matched by a marker
+ * substring in the prompt:
+ * - absent  → insert with the code's cron + prompt + timezone.
+ * - present → the prompt is code-managed (single source of truth), so we sync it if it drifted
+ *   (this is how a secret embedded in an old prompt gets scrubbed). We deliberately preserve the
+ *   row's cron, timezone, and enabled flag, so rescheduling/disabling via Telegram survives deploys.
+ * Best-effort: failures are logged, never thrown.
  */
 export async function ensureSeededSchedules(): Promise<void> {
 	let existing: Awaited<ReturnType<typeof listSchedules>>;
@@ -58,12 +61,23 @@ export async function ensureSeededSchedules(): Promise<void> {
 		return;
 	}
 	for (const s of SEEDED) {
-		if (existing.some((row) => row.prompt.includes(s.marker))) continue;
-		try {
-			const row = await insertSchedule({ cron: s.cron, prompt: s.prompt, timezone: s.timezone });
-			log.info({ scheduleId: row.id, marker: s.marker, cron: s.cron }, "seeded built-in schedule");
-		} catch (err) {
-			log.error({ err, marker: s.marker }, "seed schedules: insert failed");
+		const match = existing.find((row) => row.prompt.includes(s.marker));
+		if (!match) {
+			try {
+				const row = await insertSchedule({ cron: s.cron, prompt: s.prompt, timezone: s.timezone });
+				log.info({ scheduleId: row.id, marker: s.marker, cron: s.cron }, "seeded built-in schedule");
+			} catch (err) {
+				log.error({ err, marker: s.marker }, "seed schedules: insert failed");
+			}
+			continue;
+		}
+		if (match.prompt !== s.prompt) {
+			try {
+				await updateSchedule(match.id, { prompt: s.prompt });
+				log.info({ scheduleId: match.id, marker: s.marker }, "synced built-in schedule prompt from code");
+			} catch (err) {
+				log.error({ err, marker: s.marker }, "seed schedules: prompt sync failed");
+			}
 		}
 	}
 }

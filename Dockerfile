@@ -90,7 +90,8 @@ COPY skills ./skills
 COPY scripts/masumi-bootstrap.sh ./scripts/masumi-bootstrap.sh
 COPY scripts/scalable-bootstrap.sh ./scripts/scalable-bootstrap.sh
 COPY scripts/linkedin-cli.mjs ./scripts/linkedin-cli.mjs
-RUN chmod +x ./scripts/masumi-bootstrap.sh ./scripts/scalable-bootstrap.sh ./scripts/linkedin-cli.mjs
+COPY scripts/hepha-check.mjs ./scripts/hepha-check.mjs
+RUN chmod +x ./scripts/masumi-bootstrap.sh ./scripts/scalable-bootstrap.sh ./scripts/linkedin-cli.mjs ./scripts/hepha-check.mjs
 
 # Boot: migrate DB, restore Masumi auth, seed scalable-cli config (idempotent,
 # uses file-based session storage since Railway has no DBus/Secret Service),
