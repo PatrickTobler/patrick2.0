@@ -185,7 +185,7 @@ export async function runScheduledPrompt(scheduleId: number, prompt: string): Pr
 	const agent = new Agent({
 		initialState: {
 			systemPrompt,
-			model: chooseModel("fast", cfg.openrouterApiKey),
+			model: chooseModel("economy", cfg.openrouterApiKey),
 			thinkingLevel: "off",
 			tools: [
 				...factTools,

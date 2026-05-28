@@ -31,7 +31,7 @@ interface ExtractionResponse {
 
 export async function extractFacts(message: string): Promise<string[]> {
 	const cfg = getConfig();
-	const model = chooseModel("fast", cfg.openrouterApiKey);
+	const model = chooseModel("economy", cfg.openrouterApiKey);
 	let acc = "";
 	const stream = await streamSimple(
 		model,

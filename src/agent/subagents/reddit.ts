@@ -240,7 +240,7 @@ export function makeRedditSubagentTool(): AgentTool<typeof Schema> {
 				const result = await Promise.race([
 					runSubagent({
 						systemPrompt: buildSystemPrompt(email, password, session.connectUrl),
-						model: chooseModel("fast", cfg.openrouterApiKey),
+						model: chooseModel("economy", cfg.openrouterApiKey),
 						tools: [...shellTools, ...vaultTools, ...factTools],
 						prompt: task,
 					}),

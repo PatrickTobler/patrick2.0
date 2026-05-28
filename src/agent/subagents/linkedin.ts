@@ -114,7 +114,7 @@ export function makeLinkedinSubagentTool(): AgentTool<typeof Schema> {
 			const result = await Promise.race([
 				runSubagent({
 					systemPrompt: buildSystemPrompt(),
-					model: chooseModel("fast", cfg.openrouterApiKey),
+					model: chooseModel("economy", cfg.openrouterApiKey),
 					tools: [...shellTools, ...vaultTools, ...factTools],
 					prompt: task,
 				}),

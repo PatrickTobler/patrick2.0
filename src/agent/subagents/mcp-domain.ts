@@ -15,7 +15,7 @@ interface McpDomainSpec {
 	mcpPrefix: string;
 	/** Optional extra tools always available inside this subagent (e.g. fetch on top of github). */
 	extraMcpPrefixes?: string[];
-	/** Model class to use. Defaults to "fast". */
+	/** Model class to use. Defaults to "economy". */
 	modelClass?: ModelClass;
 	/** System prompt for the subagent — tells it its role + conventions. */
 	systemPrompt: string;
@@ -44,7 +44,7 @@ export function makeMcpDomainSubagent(spec: McpDomainSpec, getMcpTools: () => Ag
 
 			const result = await runSubagent({
 				systemPrompt: spec.systemPrompt,
-				model: chooseModel(spec.modelClass ?? "fast", cfg.openrouterApiKey),
+				model: chooseModel(spec.modelClass ?? "economy", cfg.openrouterApiKey),
 				tools: scoped,
 				prompt: task,
 			});

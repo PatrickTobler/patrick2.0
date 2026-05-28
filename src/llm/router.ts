@@ -1,7 +1,7 @@
 import "@mariozechner/pi-ai";
 import type { Model } from "@mariozechner/pi-ai";
 
-export type ModelClass = "reasoning" | "fast" | "cheap" | "coding";
+export type ModelClass = "reasoning" | "fast" | "economy" | "cheap" | "coding";
 
 interface ModelEntry {
 	id: string;
@@ -22,6 +22,10 @@ const MODELS: Record<ModelClass, ModelEntry[]> = {
 		{ id: "xiaomi/mimo-v2-pro", contextWindow: 1_048_576, maxTokens: 8192, cost: { input: 1, output: 3 } },
 		{ id: "moonshotai/kimi-k2.5", contextWindow: 262_144, maxTokens: 8192, cost: { input: 0.38, output: 1.72 } },
 		{ id: "anthropic/claude-haiku-4.5", contextWindow: 200_000, maxTokens: 8192, cost: { input: 1, output: 5 } },
+	],
+	economy: [
+		{ id: "deepseek/deepseek-v4-flash", contextWindow: 1_000_000, maxTokens: 8192, cost: { input: 0.1, output: 0.2 } },
+		{ id: "google/gemini-2.5-flash", contextWindow: 1_000_000, maxTokens: 8192, cost: { input: 0.075, output: 0.3 } },
 	],
 	cheap: [
 		{ id: "google/gemini-2.5-flash", contextWindow: 1_000_000, maxTokens: 8192, cost: { input: 0.075, output: 0.3 } },

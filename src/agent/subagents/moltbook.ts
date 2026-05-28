@@ -87,7 +87,7 @@ export function makeMoltbookSubagentTool(): AgentTool<typeof Schema> {
 			const cfg = getConfig();
 			const result = await runSubagent({
 				systemPrompt: SYSTEM_PROMPT,
-				model: chooseModel("fast", cfg.openrouterApiKey),
+				model: chooseModel("economy", cfg.openrouterApiKey),
 				tools: [...shellTools, ...vaultTools, ...factTools],
 				prompt: task,
 			});

@@ -14,6 +14,16 @@ describe("chooseModel", () => {
 		expect(m.id).toBe("xiaomi/mimo-v2.5-pro");
 	});
 
+	it("returns the configured economy model", () => {
+		const m = chooseModel("economy", "sk-test");
+		expect(m.id).toBe("deepseek/deepseek-v4-flash");
+	});
+
+	it("falls back from economy to gemini flash", () => {
+		const m = chooseModel("economy", "sk-test", { preferIndex: 1 });
+		expect(m.id).toBe("google/gemini-2.5-flash");
+	});
+
 	it("returns the configured cheap model", () => {
 		const m = chooseModel("cheap", "sk-test");
 		expect(m.id).toBe("google/gemini-2.5-flash");
