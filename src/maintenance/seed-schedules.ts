@@ -17,24 +17,27 @@ Call get_token_usage with hours=24 to get my LLM token spend for the last 24 hou
 - If spend is ~0, just say so in one line.
 Keep it to a few lines. No preamble, no markdown headers.`;
 
-const HEPHA_MONITOR_PROMPT = `[hepha-monitor] Daily health check of our Hepha autonomous coding-agent fleet. Only ping me if something needs attention — if everything is healthy, stay silent.
+const HEPHA_MONITOR_PROMPT = `[hepha-monitor] Daily health check of our Hepha autonomous coding-agent fleet. Only ping me when something needs attention — otherwise stay silent.
 
-Query the read-only Hepha API via the auth-wrapped helper script. It injects the bearer token from the server's environment, so you never see or handle the token. Use run_shell with command "node" and args as a list (the path argument must start with /api/):
+Query the read-only Hepha API via the auth-wrapped helper script. It injects the bearer token from the server's environment, so you never see or handle the token. Use run_shell with command "node" and args as a list (the path must start with /api/):
 
 Step 1 — list tasks:
   ["scripts/hepha-check.mjs", "/api/tasks"]
-Returns all tasks newest-first. Each has: task_id, status, repo_url, branch_name, pr_number, pr_url, preview_url, total_cost_usd, created_at, updated_at.
+Returns all tasks newest-first: task_id, status, repo_url, branch_name, pr_number, pr_url, preview_url, total_cost_usd, created_at, updated_at.
 
-Step 2 — find problems. A task NEEDS ATTENTION if its status is one of: failed, auth_required, out_of_credits. (status completed WITH a pr_url = healthy finish; pending/running/cancelled = no action.)
+Step 2 — sort tasks into two buckets:
+  A) NEEDS ATTENTION (report loudly): status is failed, out_of_credits, or auth_required — AND updated_at is within the last ~25 hours (i.e. it went wrong recently; ignore older/stale failures). Call the current_time tool first to compute the 25h cutoff.
+  B) FYI only (do NOT itemize): tasks with status input_required — these are blocked waiting on a human. Just count them.
+  (status completed WITH a pr_url = healthy finish; pending / running / cancelled / canceled = no action.)
 
-Step 3 — for each problem task, fetch its detail + comment thread:
+Step 3 — for each bucket-A task, fetch its detail + comment thread:
   ["scripts/hepha-check.mjs", "/api/tasks/<task_id>?events=true"]
 Read the newest entry in events[] (origin COWORKER = the agent, SOKOSUMI = the user) to understand what happened. If the response has eventsError instead of events, Sokosumi was briefly unreachable — note it and move on.
 
 Step 4 — report:
-- If there ARE problem tasks: send_telegram_message with a concise list. Per task: short task_id, status, repo, and a one-line summary of the latest comment / why it needs attention. Include pr_url if present.
-- Check the "Previous runs" context above: do NOT re-report a task you already flagged unless its status has changed since.
-- If nothing needs attention, send nothing.
+- If bucket A is empty: stay silent. Send nothing — do NOT send a message just for the FYI count.
+- If bucket A has tasks: send_telegram_message with a concise list. Per task: short task_id, status, repo, and a one-line summary of the latest comment / why it needs attention. Include pr_url if present. Then, only if bucket B is non-empty, add ONE final line like "FYI: N tasks awaiting input."
+- Check the "Previous runs" context above: do NOT re-report a bucket-A task you already flagged unless its status has changed since.
 
 Errors from the helper: "HTTP 401" = the monitoring key was rejected (tell me once). "HTTP 503" = monitoring not configured on the server (tell me once). "HEPHA_MONITOR_TOKEN is not set" = the env var is missing on this deploy (tell me once).`;
 
