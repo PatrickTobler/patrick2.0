@@ -2,7 +2,7 @@ import { Agent, type AgentMessage, type AgentTool } from "@mariozechner/pi-agent
 import type { Message } from "@mariozechner/pi-ai";
 import { getConfig } from "../config.ts";
 import { type ActionRow, insertPendingAction, listActionsByToolPrefix, resolveAction } from "../db/repos/actions.ts";
-import { chooseModel } from "../llm/router.ts";
+import { type ModelClass, chooseModel } from "../llm/router.ts";
 import { log } from "../log.ts";
 import { ingestFactsFromMessage } from "./facts.ts";
 import { buildRecallContext, buildStableSystemPrompt } from "./memory-context.ts";
@@ -22,6 +22,7 @@ import { calendarTools } from "./tools/calendar.ts";
 import { factTools } from "./tools/facts.ts";
 import { gmailTools } from "./tools/gmail.ts";
 import { mcpMetaTools } from "./tools/mcp-meta.ts";
+import { notifyTools } from "./tools/notify.ts";
 import { shellTools } from "./tools/shell.ts";
 import { skillTools } from "./tools/skills.ts";
 import { telegramTools } from "./tools/telegram.ts";
@@ -40,6 +41,9 @@ You are running on a schedule — Patrick did NOT just message you. This is auto
 - Do NOT send_telegram_message to confirm you ran. Patrick audits via query_actions.
 - The "user" message below is the scheduled prompt — instructions, not a conversation.
 - EXCEPTION — explicit-send tasks: if the scheduled prompt itself tells you to send a message (a reminder, a report, a brief), then sending IS the task and the silence default does NOT apply. A reminder that stays silent has failed its only job. Dedup still applies to everything else in the run, but never dedup away the message the schedule exists to send.
+
+## How to notify
+For anything about an identifiable item (an email, a thread, an alert, a lead): use notify_patrick with a stable item_key — it enforces dedup and quiet hours in code, so you cannot accidentally repeat yourself. Reserve send_telegram_message for explicit-send tasks (briefs, reports, reminders the schedule exists to send).
 
 ## When you MAY ping Patrick on Telegram (rare)
 Only when ALL three are true:
@@ -95,7 +99,7 @@ const TOOL_GROUPS: Record<string, () => AgentTool<any>[]> = {
 	calendar: () => calendarTools,
 	gmail: () => gmailTools,
 	whoop: () => whoopTools,
-	telegram: () => telegramTools,
+	telegram: () => [...telegramTools, ...notifyTools],
 	shell: () => shellTools,
 	skills: () => skillTools,
 	actions: () => actionTools,
@@ -111,6 +115,37 @@ const TOOL_GROUPS: Record<string, () => AgentTool<any>[]> = {
 };
 
 export const VALID_TOOL_GROUPS = Object.keys(TOOL_GROUPS);
+
+// Tool names that exist in the system but are NEVER available to scheduled runs.
+// Hardcoded (not imported) to avoid a module cycle with tools/schedules.ts.
+const MAIN_AGENT_ONLY_TOOLS = [
+	"add_schedule",
+	"list_schedules",
+	"update_schedule",
+	"pause_schedule",
+	"resume_schedule",
+	"delete_schedule",
+];
+
+/**
+ * Lint a schedule prompt against the tools its runs will actually have. A prompt that
+ * says "pause this schedule" or "use delegate_to_dune" while the profile excludes those
+ * tools produces silent non-compliance (the rent reminder failed exactly this way).
+ * Returns the referenced-but-unavailable tool names.
+ */
+export function lintScheduleToolRefs(prompt: string, toolsSpec: string | null | undefined): string[] {
+	const available = new Set(buildScheduledTools(toolsSpec).map((t) => t.name as string));
+	const known = new Set<string>(MAIN_AGENT_ONLY_TOOLS);
+	for (const group of Object.values(TOOL_GROUPS)) {
+		for (const t of group()) known.add(t.name as string);
+	}
+	const missing: string[] = [];
+	for (const name of known) {
+		if (available.has(name)) continue;
+		if (new RegExp(`\\b${name}\\b`).test(prompt)) missing.push(name);
+	}
+	return missing.sort();
+}
 
 // biome-ignore lint/suspicious/noExplicitAny: see above
 function buildScheduledTools(spec: string | null | undefined): AgentTool<any>[] {
@@ -150,7 +185,13 @@ const PRIOR_TELEGRAMS_LIMIT = 40;
 async function formatPriorTelegrams(scheduleId: number): Promise<string> {
 	let rows: ActionRow[] = [];
 	try {
-		rows = await listActionsByToolPrefix(`cron:${scheduleId}:send_telegram_`, PRIOR_TELEGRAMS_LIMIT);
+		const [sends, notifies] = await Promise.all([
+			listActionsByToolPrefix(`cron:${scheduleId}:send_telegram_`, PRIOR_TELEGRAMS_LIMIT),
+			listActionsByToolPrefix(`cron:${scheduleId}:notify_patrick`, PRIOR_TELEGRAMS_LIMIT),
+		]);
+		rows = [...sends, ...notifies]
+			.sort((a, b) => b.created_at.getTime() - a.created_at.getTime())
+			.slice(0, PRIOR_TELEGRAMS_LIMIT);
 	} catch {
 		return "";
 	}
@@ -217,10 +258,23 @@ function formatPriorRuns(scheduleId: number, actions: ActionRow[]): string {
 	].join("\n");
 }
 
+export interface ScheduledRunOptions {
+	tools?: string | null;
+	modelClass?: string | null;
+}
+
+const VALID_MODEL_CLASSES: ModelClass[] = ["reasoning", "fast", "economy", "cheap", "coding"];
+
+function resolveModelClass(spec: string | null | undefined): ModelClass {
+	if (spec && (VALID_MODEL_CLASSES as string[]).includes(spec)) return spec as ModelClass;
+	if (spec) log.warn({ spec }, "unknown model class on schedule — falling back to economy");
+	return "economy";
+}
+
 export async function runScheduledPrompt(
 	scheduleId: number,
 	prompt: string,
-	toolProfile?: string | null,
+	opts: ScheduledRunOptions = {},
 ): Promise<ScheduledRunResult> {
 	const cfg = getConfig();
 
@@ -251,9 +305,9 @@ export async function runScheduledPrompt(
 	const agent = new Agent({
 		initialState: {
 			systemPrompt,
-			model: chooseModel("economy", cfg.openrouterApiKey),
+			model: chooseModel(resolveModelClass(opts.modelClass), cfg.openrouterApiKey),
 			thinkingLevel: "off",
-			tools: buildScheduledTools(toolProfile),
+			tools: buildScheduledTools(opts.tools),
 			messages: [],
 		},
 		convertToLlm: (messages) => messages as Message[],

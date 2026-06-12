@@ -58,7 +58,7 @@ Check list_skills for specialized tasks (ads analysis, GTM, banking, etc.). Each
 To change a file durably:
 1. delegate_to_github
 2. Tell it to call create_or_update_file on PatrickTobler/patrick2.0 with the new content (e.g. path="skills/wise-bank/wise_query.sh", message="...", branch="main").
-3. The push triggers a Railway redeploy that bakes the new file in.
+3. IMPORTANT: pushing does NOT auto-deploy. The commit is durable, but the running app only picks it up at the next deploy — Patrick runs that manually (railway up). If the change matters now, tell Patrick a deploy is needed.
 
 If you already wrote a file via run_shell to test it, still commit afterward via the github route — otherwise the work is lost on next deploy.
 

@@ -70,7 +70,14 @@ export const readEmailTool: AgentTool<typeof ReadSchema> = {
 	parameters: ReadSchema,
 	execute: async (_id, { id, account }: Static<typeof ReadSchema>) => {
 		const email = await readEmail(id, account);
-		const text = `From: ${email.from}\nTo: ${email.to}\nSubject: ${email.subject}\nDate: ${email.date}\nAccount: ${email.account}\nThread: ${email.threadId}\n\n${email.body}`;
+		// Newsletters/marketing mail can run 50KB+; 8KB of plain text covers any human
+		// email and keeps one read from dominating the rest of the run's context.
+		const MAX_BODY_CHARS = 8_000;
+		const body =
+			email.body.length > MAX_BODY_CHARS
+				? `${email.body.slice(0, MAX_BODY_CHARS)}\n…[${email.body.length - MAX_BODY_CHARS} chars truncated — almost certainly boilerplate]`
+				: email.body;
+		const text = `From: ${email.from}\nTo: ${email.to}\nSubject: ${email.subject}\nDate: ${email.date}\nAccount: ${email.account}\nThread: ${email.threadId}\n\n${body}`;
 		return { content: [{ type: "text", text }], details: { id, threadId: email.threadId, account: email.account } };
 	},
 };

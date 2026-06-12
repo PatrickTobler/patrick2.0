@@ -53,3 +53,27 @@ describe("formatUsageSummary", () => {
 		expect(out).toContain("5.0k");
 	});
 });
+
+import { formatAnomalies } from "./usage.ts";
+
+describe("formatAnomalies", () => {
+	it("flags sources far above baseline and new sources", () => {
+		const out = formatAnomalies(
+			[
+				{ source: "subagent:moltbook", windowCostUsd: 4.8, baselineDailyCostUsd: 0 },
+				{ source: "scheduled", windowCostUsd: 0.9, baselineDailyCostUsd: 0.5 },
+				{ source: "facts", windowCostUsd: 0.02, baselineDailyCostUsd: 0.02 },
+			],
+			24,
+		);
+		expect(out).toContain("subagent:moltbook");
+		expect(out).toContain("NO spend in the prior 7 days");
+		expect(out).toContain("1.8x");
+		expect(out).not.toContain("facts");
+	});
+
+	it("reports normal when nothing crosses thresholds", () => {
+		const out = formatAnomalies([{ source: "scheduled", windowCostUsd: 0.5, baselineDailyCostUsd: 0.45 }], 24);
+		expect(out).toContain("none");
+	});
+});

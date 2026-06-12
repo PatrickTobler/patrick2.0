@@ -24,6 +24,7 @@ import { calendarTools } from "./tools/calendar.ts";
 import { factTools } from "./tools/facts.ts";
 import { gmailTools } from "./tools/gmail.ts";
 import { mcpMetaTools } from "./tools/mcp-meta.ts";
+import { notifyTools } from "./tools/notify.ts";
 import { scheduleTools } from "./tools/schedules.ts";
 import { shellTools } from "./tools/shell.ts";
 import { skillTools } from "./tools/skills.ts";
@@ -178,6 +179,7 @@ export async function handleUserMessage(args: {
 				...skillTools,
 				...actionTools,
 				...mcpMetaTools,
+				...notifyTools,
 				// All MCP access goes through domain-scoped subagents to keep the main agent's
 				// tool schema list tight. Each subagent owns one MCP server's tool surface.
 				makeCoderSubagentTool(() => mcpTools),

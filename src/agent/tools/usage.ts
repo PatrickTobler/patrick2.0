@@ -1,6 +1,11 @@
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { type Static, Type } from "@mariozechner/pi-ai";
-import { type UsageSummary, summarizeUsageSince } from "../../db/repos/usage.ts";
+import {
+	type SourceBaseline,
+	type UsageSummary,
+	compareUsageToBaseline,
+	summarizeUsageSince,
+} from "../../db/repos/usage.ts";
 
 const Schema = Type.Object({
 	hours: Type.Optional(
@@ -46,6 +51,30 @@ export function formatUsageSummary(s: UsageSummary, hours: number): string {
 	return lines.join("\n");
 }
 
+// Spend below this is never an anomaly worth a ping.
+const ANOMALY_MIN_USD = 0.25;
+const ANOMALY_RATIO = 1.5;
+
+export function formatAnomalies(baselines: SourceBaseline[], windowHours: number): string {
+	const scale = windowHours / 24; // baseline is per-day; scale to the window
+	const flags: string[] = [];
+	for (const b of baselines) {
+		const expected = b.baselineDailyCostUsd * scale;
+		if (b.windowCostUsd < ANOMALY_MIN_USD) continue;
+		if (expected < 0.01) {
+			flags.push(
+				`  ⚠ ${b.source}: ${fmtUsd(b.windowCostUsd)} from a source with NO spend in the prior 7 days — new or resurrected. If this source should not exist (deleted schedule, retired campaign), investigate.`,
+			);
+		} else if (b.windowCostUsd / expected >= ANOMALY_RATIO) {
+			flags.push(
+				`  ⚠ ${b.source}: ${fmtUsd(b.windowCostUsd)} vs ~${fmtUsd(expected)} expected (${(b.windowCostUsd / expected).toFixed(1)}x its 7-day baseline).`,
+			);
+		}
+	}
+	if (flags.length === 0) return "Anomalies: none — all sources within normal range of their 7-day baseline.";
+	return ["ANOMALIES (computed vs 7-day per-source baseline):", ...flags].join("\n");
+}
+
 export const getTokenUsageTool: AgentTool<typeof Schema> = {
 	name: "get_token_usage",
 	label: "Token usage",
@@ -55,8 +84,8 @@ export const getTokenUsageTool: AgentTool<typeof Schema> = {
 	execute: async (_id, { hours }: Static<typeof Schema>) => {
 		const window = Math.min(Math.max(hours ?? 24, 1), 168);
 		const since = new Date(Date.now() - window * 60 * 60 * 1000);
-		const summary = await summarizeUsageSince(since);
-		const text = formatUsageSummary(summary, window);
+		const [summary, baselines] = await Promise.all([summarizeUsageSince(since), compareUsageToBaseline(window)]);
+		const text = `${formatUsageSummary(summary, window)}\n\n${formatAnomalies(baselines, window)}`;
 		return {
 			content: [{ type: "text", text }],
 			details: { hours: window, ...summary },

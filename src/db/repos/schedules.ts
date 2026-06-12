@@ -8,6 +8,10 @@ export interface ScheduleRow {
 	enabled: boolean;
 	/** Comma-separated tool-group names (see TOOL_GROUPS); null = full tool surface. */
 	tools: string | null;
+	/** Model class for runs (see ModelClass in llm/router.ts); null = economy. */
+	model_class: string | null;
+	/** Auto-disable after the first successful fire (reminders). */
+	one_shot: boolean;
 	last_fired_at: Date | null;
 	created_at: Date;
 }
@@ -17,10 +21,19 @@ export async function insertSchedule(input: {
 	prompt: string;
 	timezone?: string;
 	tools?: string;
+	modelClass?: string;
+	oneShot?: boolean;
 }): Promise<ScheduleRow> {
 	const res = await query<ScheduleRow>(
-		"insert into schedules (cron, prompt, timezone, tools) values ($1, $2, $3, $4) returning *",
-		[input.cron, input.prompt, input.timezone ?? "Europe/Zurich", input.tools ?? null],
+		"insert into schedules (cron, prompt, timezone, tools, model_class, one_shot) values ($1, $2, $3, $4, $5, $6) returning *",
+		[
+			input.cron,
+			input.prompt,
+			input.timezone ?? "Europe/Zurich",
+			input.tools ?? null,
+			input.modelClass ?? null,
+			input.oneShot ?? false,
+		],
 	);
 	const row = res.rows[0];
 	if (!row) throw new Error("insertSchedule returned no row");
@@ -39,7 +52,15 @@ export async function getSchedule(id: number): Promise<ScheduleRow | null> {
 
 export async function updateSchedule(
 	id: number,
-	patch: { cron?: string; prompt?: string; timezone?: string; enabled?: boolean; tools?: string | null },
+	patch: {
+		cron?: string;
+		prompt?: string;
+		timezone?: string;
+		enabled?: boolean;
+		tools?: string | null;
+		modelClass?: string | null;
+		oneShot?: boolean;
+	},
 ): Promise<ScheduleRow | null> {
 	const fields: string[] = [];
 	const params: unknown[] = [id];
@@ -63,6 +84,14 @@ export async function updateSchedule(
 	if (patch.tools !== undefined) {
 		fields.push(`tools = $${i++}`);
 		params.push(patch.tools);
+	}
+	if (patch.modelClass !== undefined) {
+		fields.push(`model_class = $${i++}`);
+		params.push(patch.modelClass);
+	}
+	if (patch.oneShot !== undefined) {
+		fields.push(`one_shot = $${i++}`);
+		params.push(patch.oneShot);
 	}
 	if (fields.length === 0) return getSchedule(id);
 	const res = await query<ScheduleRow>(`update schedules set ${fields.join(", ")} where id = $1 returning *`, params);

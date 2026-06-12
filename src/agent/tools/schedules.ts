@@ -9,14 +9,25 @@ import {
 	updateSchedule,
 } from "../../db/repos/schedules.ts";
 import { type ReloadResult, reloadOneSchedule } from "../../scheduler/service.ts";
-import { VALID_TOOL_GROUPS } from "../scheduled-runner.ts";
+import { VALID_TOOL_GROUPS, lintScheduleToolRefs } from "../scheduled-runner.ts";
+
+const VALID_MODEL_CLASSES = ["economy", "fast", "reasoning", "coding", "cheap"];
 
 function fmtSchedule(s: ScheduleRow): string {
 	const status = s.enabled ? "ON " : "off";
 	const last = s.last_fired_at ? ` last:${s.last_fired_at.toISOString().slice(0, 16).replace("T", " ")}` : "";
 	const tools = s.tools ? ` tools:[${s.tools}]` : "";
+	const model = s.model_class ? ` model:${s.model_class}` : "";
+	const oneShot = s.one_shot ? " ONE-SHOT" : "";
 	const promptSnippet = s.prompt.length > 80 ? `${s.prompt.slice(0, 80)}…` : s.prompt;
-	return `${s.id} [${status}] "${s.cron}" ${s.timezone}${tools}${last}\n  ${promptSnippet}`;
+	return `${s.id} [${status}]${oneShot} "${s.cron}" ${s.timezone}${tools}${model}${last}\n  ${promptSnippet}`;
+}
+
+function lintWarning(prompt: string, tools: string | null): string {
+	const missing = lintScheduleToolRefs(prompt, tools);
+	return missing.length > 0
+		? `\nWARNING: the prompt mentions tools its runs will NOT have (${missing.join(", ")}) — those instructions will be silently ignored. Fix the prompt or the tools profile.`
+		: "";
 }
 
 // The live node-cron task and the DB row are separate state — report both so a
@@ -62,6 +73,19 @@ const AddSchema = Type.Object({
 			maxLength: 300,
 		}),
 	),
+	model_class: Type.Optional(
+		Type.String({
+			description:
+				"Model tier for runs: economy (default — triage/relay work), fast (richer judgment), reasoning (weekly synthesis/analysis), coding. Use reasoning for judgment-heavy weekly schedules.",
+			maxLength: 20,
+		}),
+	),
+	one_shot: Type.Optional(
+		Type.Boolean({
+			description:
+				"true = fire once then auto-disable (in code — reliable). USE THIS for every 'remind me on <date>' request instead of telling the run to pause itself.",
+		}),
+	),
 });
 
 export const addScheduleTool: AgentTool<typeof AddSchema> = {
@@ -75,15 +99,21 @@ export const addScheduleTool: AgentTool<typeof AddSchema> = {
 			throw new Error(`Invalid cron expression: "${params.cron}"`);
 		}
 		if (params.tools) validateToolsSpec(params.tools);
+		if (params.model_class && !VALID_MODEL_CLASSES.includes(params.model_class)) {
+			throw new Error(`Invalid model_class "${params.model_class}". Valid: ${VALID_MODEL_CLASSES.join(", ")}`);
+		}
 		const row = await insertSchedule({
 			cron: params.cron,
 			prompt: params.prompt,
 			...(params.timezone ? { timezone: params.timezone } : {}),
 			...(params.tools ? { tools: params.tools } : {}),
+			...(params.model_class ? { modelClass: params.model_class } : {}),
+			...(params.one_shot !== undefined ? { oneShot: params.one_shot } : {}),
 		});
 		const reload = await reloadOneSchedule(row.id);
+		const warn = lintWarning(row.prompt, row.tools);
 		return {
-			content: [{ type: "text", text: `Scheduled #${row.id} (${fmtReload(reload)}):\n${fmtSchedule(row)}` }],
+			content: [{ type: "text", text: `Scheduled #${row.id} (${fmtReload(reload)}):\n${fmtSchedule(row)}${warn}` }],
 			details: { id: row.id, cron: row.cron, timezone: row.timezone, ...reload },
 		};
 	},
@@ -118,6 +148,10 @@ const UpdateSchema = Type.Object({
 			maxLength: 300,
 		}),
 	),
+	model_class: Type.Optional(
+		Type.String({ description: "New model tier: economy, fast, reasoning, coding.", maxLength: 20 }),
+	),
+	one_shot: Type.Optional(Type.Boolean({ description: "Fire once then auto-disable." })),
 });
 
 export const updateScheduleTool: AgentTool<typeof UpdateSchema> = {
@@ -126,21 +160,30 @@ export const updateScheduleTool: AgentTool<typeof UpdateSchema> = {
 	description:
 		"Edit a schedule's cron, prompt, or timezone. Use when Patrick wants to change WHEN or WHAT a schedule does (without losing history).",
 	parameters: UpdateSchema,
-	execute: async (_id, { id, cron: cronExpr, prompt, timezone, tools }: Static<typeof UpdateSchema>) => {
+	execute: async (
+		_id,
+		{ id, cron: cronExpr, prompt, timezone, tools, model_class, one_shot }: Static<typeof UpdateSchema>,
+	) => {
 		if (cronExpr !== undefined && !cron.validate(cronExpr)) {
 			throw new Error(`Invalid cron expression: "${cronExpr}"`);
 		}
 		if (tools) validateToolsSpec(tools);
+		if (model_class && !VALID_MODEL_CLASSES.includes(model_class)) {
+			throw new Error(`Invalid model_class "${model_class}". Valid: ${VALID_MODEL_CLASSES.join(", ")}`);
+		}
 		const row = await updateSchedule(id, {
 			...(cronExpr !== undefined ? { cron: cronExpr } : {}),
 			...(prompt !== undefined ? { prompt } : {}),
 			...(timezone !== undefined ? { timezone } : {}),
 			...(tools !== undefined ? { tools: tools.trim() === "" ? null : tools } : {}),
+			...(model_class !== undefined ? { modelClass: model_class.trim() === "" ? null : model_class } : {}),
+			...(one_shot !== undefined ? { oneShot: one_shot } : {}),
 		});
 		if (!row) return { content: [{ type: "text", text: `Schedule #${id} not found.` }], details: { id, ok: false } };
 		const reload = await reloadOneSchedule(id);
+		const warn = lintWarning(row.prompt, row.tools);
 		return {
-			content: [{ type: "text", text: `Updated (${fmtReload(reload)}):\n${fmtSchedule(row)}` }],
+			content: [{ type: "text", text: `Updated (${fmtReload(reload)}):\n${fmtSchedule(row)}${warn}` }],
 			details: { id, ok: true, ...reload },
 		};
 	},

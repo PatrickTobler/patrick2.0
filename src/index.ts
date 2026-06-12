@@ -9,6 +9,7 @@ import { startMasumiTokenRefresher, stopMasumiTokenRefresher } from "./masumi/au
 import { startMcpBridge, stopMcpBridge } from "./mcp/bridge.ts";
 import { reloadAllSchedules, stopAllSchedules } from "./scheduler/service.ts";
 import { createBot } from "./telegram/bot.ts";
+import { startQueuedNotificationDelivery, stopQueuedNotificationDelivery } from "./telegram/queue-delivery.ts";
 
 async function main(): Promise<void> {
 	const cfg = getConfig();
@@ -41,6 +42,9 @@ async function main(): Promise<void> {
 	// Daily fact decay — keeps the recall pool weighted toward fresh + reinforced.
 	startFactDecayJob();
 
+	// Deliver notifications that were queued during quiet hours (07:00 batch).
+	startQueuedNotificationDelivery();
+
 	const handle = createBot(async (ctx) => {
 		await handleUserMessage({
 			chatId: ctx.chatId,
@@ -56,6 +60,7 @@ async function main(): Promise<void> {
 		log.info({ signal }, "shutting down");
 		stopAllSchedules();
 		stopMasumiTokenRefresher();
+		stopQueuedNotificationDelivery();
 		stopFactDecayJob();
 		await handle.stop().catch(() => {});
 		await stopMcpBridge().catch(() => {});

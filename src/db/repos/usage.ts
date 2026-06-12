@@ -53,6 +53,45 @@ interface GroupRow {
 	cost: string | null;
 }
 
+export interface SourceBaseline {
+	source: string;
+	windowCostUsd: number;
+	baselineDailyCostUsd: number;
+}
+
+/**
+ * Per-source spend in the current window vs the daily average over the prior 7 days
+ * (window excluded). Lets the token report flag anomalies deterministically instead
+ * of asking the model to do cross-call arithmetic.
+ */
+export async function compareUsageToBaseline(windowHours: number): Promise<SourceBaseline[]> {
+	const res = await query<{ source: string; window_cost: string | null; baseline_daily: string | null }>(
+		`with win as (
+		   select source, sum(cost_usd) as cost
+		   from usage_events
+		   where created_at >= now() - ($1 || ' hours')::interval
+		   group by source
+		 ), base as (
+		   select source, sum(cost_usd) / 7.0 as daily
+		   from usage_events
+		   where created_at >= now() - ($1 || ' hours')::interval - interval '7 days'
+		     and created_at <  now() - ($1 || ' hours')::interval
+		   group by source
+		 )
+		 select coalesce(w.source, b.source) as source,
+		        coalesce(w.cost, 0) as window_cost,
+		        coalesce(b.daily, 0) as baseline_daily
+		 from win w full outer join base b on w.source = b.source
+		 order by coalesce(w.cost, 0) desc`,
+		[windowHours],
+	);
+	return res.rows.map((r) => ({
+		source: r.source,
+		windowCostUsd: Number(r.window_cost ?? 0),
+		baselineDailyCostUsd: Number(r.baseline_daily ?? 0),
+	}));
+}
+
 export async function summarizeUsageSince(since: Date): Promise<UsageSummary> {
 	const [totals, byModel, bySource] = await Promise.all([
 		query<TotalsRow>(
