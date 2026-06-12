@@ -165,6 +165,13 @@ First action of every task should be: open https://www.reddit.com/ and check whe
 1. open the post URL.
 2. find role button click --name "upvote".
 
+## Context discipline (you have a hard turn + token budget)
+Every tool result is re-sent to you on every later turn — one fat snapshot poisons the whole run.
+- Snapshot with -i (interactive elements only), never a full-page snapshot unless a -i one failed.
+- After a snapshot, immediately work from the few refs/titles you need; don't re-snapshot the same page without a navigation in between.
+- When reading feeds/inboxes, extract the top N items and stop — never page through "just in case".
+If you hit the budget the run is cut off mid-task, so spend calls on the goal, not on looking around.
+
 ## Hard rules
 - Always pass --cdp "${connectUrl}". Never omit.
 - Always pass timeout_ms: 120000 on run_shell for agent-browser.

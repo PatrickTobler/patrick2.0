@@ -9,7 +9,7 @@ async function fire(schedule: ScheduleRow): Promise<void> {
 	const start = Date.now();
 	log.info({ scheduleId: schedule.id, cron: schedule.cron }, "scheduled prompt firing");
 	try {
-		const result = await runScheduledPrompt(schedule.id, schedule.prompt);
+		const result = await runScheduledPrompt(schedule.id, schedule.prompt, schedule.tools);
 		await markFired(schedule.id);
 		log.info(
 			{
@@ -25,11 +25,11 @@ async function fire(schedule: ScheduleRow): Promise<void> {
 	}
 }
 
-function register(schedule: ScheduleRow): void {
-	if (!schedule.enabled) return;
+function register(schedule: ScheduleRow): boolean {
+	if (!schedule.enabled) return false;
 	if (!cron.validate(schedule.cron)) {
 		log.warn({ scheduleId: schedule.id, cron: schedule.cron }, "invalid cron expression — skipped");
-		return;
+		return false;
 	}
 	const task = cron.schedule(
 		schedule.cron,
@@ -38,8 +38,19 @@ function register(schedule: ScheduleRow): void {
 		},
 		{ timezone: schedule.timezone },
 	);
-	tasks.set(schedule.id, task);
+	// Number() guards against ids arriving as strings (pg returns int8 as string unless
+	// a type parser is set) — a string key here is how the Moltbook ghost cron survived
+	// its own deletion for 10 days.
+	tasks.set(Number(schedule.id), task);
 	log.info({ scheduleId: schedule.id, cron: schedule.cron, tz: schedule.timezone }, "schedule registered");
+	return true;
+}
+
+export interface ReloadResult {
+	/** True if a live in-memory task existed and was stopped. */
+	stoppedLiveTask: boolean;
+	/** True if the schedule is now registered with a live task. */
+	nowRegistered: boolean;
 }
 
 export async function reloadAllSchedules(): Promise<number> {
@@ -52,15 +63,17 @@ export async function reloadAllSchedules(): Promise<number> {
 	return tasks.size;
 }
 
-export async function reloadOneSchedule(id: number): Promise<void> {
-	const existing = tasks.get(id);
+export async function reloadOneSchedule(id: number): Promise<ReloadResult> {
+	const key = Number(id);
+	const existing = tasks.get(key);
 	if (existing) {
 		existing.stop();
-		tasks.delete(id);
+		tasks.delete(key);
 	}
 	const schedules = await listSchedules();
-	const s = schedules.find((x) => x.id === id);
-	if (s) register(s);
+	const s = schedules.find((x) => Number(x.id) === key);
+	const nowRegistered = s ? register(s) : false;
+	return { stoppedLiveTask: existing !== undefined, nowRegistered };
 }
 
 export function listActiveSchedules(): number[] {

@@ -6,14 +6,21 @@ export interface ScheduleRow {
 	timezone: string;
 	prompt: string;
 	enabled: boolean;
+	/** Comma-separated tool-group names (see TOOL_GROUPS); null = full tool surface. */
+	tools: string | null;
 	last_fired_at: Date | null;
 	created_at: Date;
 }
 
-export async function insertSchedule(input: { cron: string; prompt: string; timezone?: string }): Promise<ScheduleRow> {
+export async function insertSchedule(input: {
+	cron: string;
+	prompt: string;
+	timezone?: string;
+	tools?: string;
+}): Promise<ScheduleRow> {
 	const res = await query<ScheduleRow>(
-		"insert into schedules (cron, prompt, timezone) values ($1, $2, $3) returning *",
-		[input.cron, input.prompt, input.timezone ?? "Europe/Zurich"],
+		"insert into schedules (cron, prompt, timezone, tools) values ($1, $2, $3, $4) returning *",
+		[input.cron, input.prompt, input.timezone ?? "Europe/Zurich", input.tools ?? null],
 	);
 	const row = res.rows[0];
 	if (!row) throw new Error("insertSchedule returned no row");
@@ -32,7 +39,7 @@ export async function getSchedule(id: number): Promise<ScheduleRow | null> {
 
 export async function updateSchedule(
 	id: number,
-	patch: { cron?: string; prompt?: string; timezone?: string; enabled?: boolean },
+	patch: { cron?: string; prompt?: string; timezone?: string; enabled?: boolean; tools?: string | null },
 ): Promise<ScheduleRow | null> {
 	const fields: string[] = [];
 	const params: unknown[] = [id];
@@ -52,6 +59,10 @@ export async function updateSchedule(
 	if (patch.enabled !== undefined) {
 		fields.push(`enabled = $${i++}`);
 		params.push(patch.enabled);
+	}
+	if (patch.tools !== undefined) {
+		fields.push(`tools = $${i++}`);
+		params.push(patch.tools);
 	}
 	if (fields.length === 0) return getSchedule(id);
 	const res = await query<ScheduleRow>(`update schedules set ${fields.join(", ")} where id = $1 returning *`, params);

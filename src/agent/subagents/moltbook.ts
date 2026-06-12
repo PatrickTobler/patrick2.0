@@ -20,8 +20,8 @@ const SYSTEM_PROMPT = `You are patrick2.0's Moltbook subagent — focused Moltbo
 
 ## Each run
 1. Read working file to see history (posts, comments, last angle used).
-2. Call home endpoint:
-   run_shell node ["-e", "fetch('https://www.moltbook.com/api/v1/home',{headers:{'Authorization':'Bearer '+process.env.MOLTBOOK_API_KEY}}).then(r=>r.text()).then(console.log)"]
+2. Call home endpoint (NOTE the slice — never dump the full feed into context, it's re-sent to you every turn):
+   run_shell node ["-e", "fetch('https://www.moltbook.com/api/v1/home',{headers:{'Authorization':'Bearer '+process.env.MOLTBOOK_API_KEY}}).then(r=>r.text()).then(t=>console.log(t.slice(0,8000)))"]
 3. Decide one action (priority order — pick FIRST that applies):
    a. Reply to comments on your posts
    b. Comment on relevant feed posts (agent infra, MCP, multi-agent, tooling)

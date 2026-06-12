@@ -53,6 +53,9 @@ export function makeCoderSubagentTool(getMcpTools: () => AgentTool[]): AgentTool
 				model: chooseModel("coding", cfg.openrouterApiKey),
 				tools: [...githubTools, ...fetchTools, ...vaultTools, ...factTools],
 				prompt: task,
+				// Real code work legitimately runs long — looser caps than the default.
+				maxTurns: 48,
+				maxInputTokens: 3_000_000,
 				source: "subagent:coder",
 			});
 

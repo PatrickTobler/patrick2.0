@@ -58,6 +58,12 @@ Only escalate to Patrick when a thread needs a *human decision* (money, commitme
 
 If Patrick told you to ignore a thread/sender (check facts + previous runs), do NOT re-surface it.
 
+## Dedup is a hard rule
+An email/thread/event gets flagged to Patrick ONCE — ever. "Still unread" is NOT new: never re-surface an item because it is old, buried, or still sitting unread. Check the "Recent Telegram pings" block before composing; if the sender/topic appears there, the only thing that justifies a new ping is a genuinely NEW message in that thread — and then mention only the new part.
+
+## Quiet hours
+Use current_time plus any stored facts about travel to estimate Patrick's CURRENT local time (he travels; Zurich is only the default). Between 23:00 and 07:00 local, ping only for true URGENT items (security, money at risk, something blocking him tomorrow morning). Everything else keeps until a daytime run.
+
 ## Tone
 Terse, direct, plain. No emojis unless mirroring.
 `;
@@ -76,6 +82,57 @@ export function setMcpToolsForScheduled(tools: AgentTool<any>[]): void {
 	mcpToolsRef = tools;
 }
 
+// Tool groups a schedule can opt into via its `tools` column (comma-separated names).
+// NULL/empty = everything. High-frequency schedules (email triage fires 96x/day) carry
+// a slim profile so each fire doesn't pay the full ~50-schema prompt cost.
+// biome-ignore lint/suspicious/noExplicitAny: see above
+const TOOL_GROUPS: Record<string, () => AgentTool<any>[]> = {
+	facts: () => factTools,
+	thinking: () => thinkingTools,
+	usage: () => usageTools,
+	vault: () => vaultTools,
+	calendar: () => calendarTools,
+	gmail: () => gmailTools,
+	whoop: () => whoopTools,
+	telegram: () => telegramTools,
+	shell: () => shellTools,
+	skills: () => skillTools,
+	actions: () => actionTools,
+	mcp: () => mcpMetaTools,
+	coder: () => [makeCoderSubagentTool(() => mcpToolsRef)],
+	researcher: () => [makeResearcherSubagentTool(() => mcpToolsRef)],
+	github: () => [makeMcpDomainSubagent(githubSubagentSpec, () => mcpToolsRef)],
+	linear: () => [makeMcpDomainSubagent(linearSubagentSpec, () => mcpToolsRef)],
+	dune: () => [makeMcpDomainSubagent(duneSubagentSpec, () => mcpToolsRef)],
+	web: () => [makeMcpDomainSubagent(webSubagentSpec, () => mcpToolsRef)],
+	moltbook: () => [makeMoltbookSubagentTool()],
+	linkedin: () => [makeLinkedinSubagentTool()],
+};
+
+export const VALID_TOOL_GROUPS = Object.keys(TOOL_GROUPS);
+
+// biome-ignore lint/suspicious/noExplicitAny: see above
+function buildScheduledTools(spec: string | null | undefined): AgentTool<any>[] {
+	const names = (spec ?? "")
+		.split(",")
+		.map((s) => s.trim())
+		.filter(Boolean);
+	const useAll = names.length === 0;
+	const unknown = names.filter((n) => !TOOL_GROUPS[n]);
+	if (unknown.length > 0) {
+		// Fail open: a typo in a profile must degrade to "all tools", never to a crippled run.
+		log.warn({ unknown, spec }, "unknown tool groups in schedule profile — using full tool surface");
+	}
+	const selected = useAll || unknown.length > 0 ? VALID_TOOL_GROUPS : [...new Set(["time", ...names])];
+	// biome-ignore lint/suspicious/noExplicitAny: see above
+	const tools: AgentTool<any>[] = [...timeTools]; // always present: current_time underpins quiet-hours + dedup logic
+	for (const name of selected) {
+		const group = TOOL_GROUPS[name];
+		if (group) tools.push(...group());
+	}
+	return tools;
+}
+
 // How many prior runs of this schedule to surface as context. The model needs enough history
 // to recognise "I already pinged Patrick about this" or "I already replied to that masumi thread"
 // without bloating the prompt. ~25 actions ≈ a few full runs.
@@ -84,8 +141,10 @@ const PRIOR_ACTIONS_LIMIT = 25;
 // Separately pull the most-recent N Telegram sends from this schedule and surface them
 // verbatim. Routine-heavy schedules (e.g. email triage) can produce 30-50 actions per run,
 // pushing earlier sends out of the PRIOR_ACTIONS_LIMIT window — so we always keep at least
-// this many of the most recent pings visible for dedup.
-const PRIOR_TELEGRAMS_LIMIT = 15;
+// this many of the most recent pings visible for dedup. Sized to cover several DAYS of a
+// noisy schedule's sends: at 15, the triage schedule re-flagged week-old unread emails as
+// "new" each morning because yesterday's pings had already scrolled out of the window.
+const PRIOR_TELEGRAMS_LIMIT = 40;
 
 async function formatPriorTelegrams(scheduleId: number): Promise<string> {
 	let rows: ActionRow[] = [];
@@ -157,7 +216,11 @@ function formatPriorRuns(scheduleId: number, actions: ActionRow[]): string {
 	].join("\n");
 }
 
-export async function runScheduledPrompt(scheduleId: number, prompt: string): Promise<ScheduledRunResult> {
+export async function runScheduledPrompt(
+	scheduleId: number,
+	prompt: string,
+	toolProfile?: string | null,
+): Promise<ScheduledRunResult> {
 	const cfg = getConfig();
 
 	// Same cache-aware split as the live chat loop: identity + profile + skills + banner are
@@ -189,30 +252,7 @@ export async function runScheduledPrompt(scheduleId: number, prompt: string): Pr
 			systemPrompt,
 			model: chooseModel("economy", cfg.openrouterApiKey),
 			thinkingLevel: "off",
-			tools: [
-				...factTools,
-				...thinkingTools,
-				...timeTools,
-				...usageTools,
-				...vaultTools,
-				...calendarTools,
-				...gmailTools,
-				...whoopTools,
-				...telegramTools,
-				...shellTools,
-				...skillTools,
-				...actionTools,
-				...mcpMetaTools,
-				// Same subagent pattern as main agent — keeps scheduled runs light.
-				makeCoderSubagentTool(() => mcpToolsRef),
-				makeResearcherSubagentTool(() => mcpToolsRef),
-				makeMcpDomainSubagent(githubSubagentSpec, () => mcpToolsRef),
-				makeMcpDomainSubagent(linearSubagentSpec, () => mcpToolsRef),
-				makeMcpDomainSubagent(duneSubagentSpec, () => mcpToolsRef),
-				makeMcpDomainSubagent(webSubagentSpec, () => mcpToolsRef),
-				makeMoltbookSubagentTool(),
-				makeLinkedinSubagentTool(),
-			],
+			tools: buildScheduledTools(toolProfile),
 			messages: [],
 		},
 		convertToLlm: (messages) => messages as Message[],

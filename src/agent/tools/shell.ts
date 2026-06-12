@@ -8,7 +8,21 @@ const exec = promisify(execFile);
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_TIMEOUT_MS = 120_000;
-const MAX_OUTPUT_BYTES = 200_000;
+// What the model sees. Every byte here is re-sent on EVERY subsequent turn of the run,
+// so a fat result (browser snapshot, raw API JSON) gets paid for quadratically. Keep the
+// head (where structure/refs live) plus a small tail (where errors/summaries land).
+const MAX_HEAD_BYTES = 40_000;
+const MAX_TAIL_BYTES = 4_000;
+// What the child process may write before being killed — generous, since we truncate
+// for the model anyway. Keeping this larger than the display cap means big-but-valid
+// outputs get truncated instead of erroring (maxBuffer overflow throws).
+const MAX_BUFFER_BYTES = 2_000_000;
+
+function truncateForModel(out: string): string {
+	if (out.length <= MAX_HEAD_BYTES + MAX_TAIL_BYTES) return out;
+	const dropped = out.length - MAX_HEAD_BYTES - MAX_TAIL_BYTES;
+	return `${out.slice(0, MAX_HEAD_BYTES)}\n…[${dropped} bytes truncated — narrow your command (filter/paginate/jq) if you need the middle]…\n${out.slice(-MAX_TAIL_BYTES)}`;
+}
 
 const Schema = Type.Object({
 	command: Type.String({
@@ -41,19 +55,17 @@ export const runShellTool: AgentTool<typeof Schema> = {
 	name: "run_shell",
 	label: "Run a shell command",
 	description:
-		"Execute a CLI binary with arguments. No shell interpolation (args is a list, not a string). Use to invoke CLIs you learned about from skills: masumi-agent-messenger, gtm, wise_query.sh, etc. Every call is logged to action history. Default timeout 30s, max 120s. Output capped at ~200 KB.",
+		"Execute a CLI binary with arguments. No shell interpolation (args is a list, not a string). Use to invoke CLIs you learned about from skills: masumi-agent-messenger, gtm, wise_query.sh, etc. Every call is logged to action history. Default timeout 30s, max 120s. Output over ~44 KB is truncated (head+tail) — filter/paginate at the source instead of dumping raw data.",
 	parameters: Schema,
 	execute: async (_id, params: Static<typeof Schema>) => {
 		const timeout = Math.min(params.timeout_ms ?? DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS);
 		try {
 			const { stdout, stderr } = await exec(params.command, params.args, {
 				timeout,
-				maxBuffer: MAX_OUTPUT_BYTES,
+				maxBuffer: MAX_BUFFER_BYTES,
 				env: { ...process.env, ...(params.env ?? {}) },
 			});
-			const truncatedStdout =
-				stdout.length > MAX_OUTPUT_BYTES ? `${stdout.slice(0, MAX_OUTPUT_BYTES)}…(truncated)` : stdout;
-			const text = `$ ${params.command} ${params.args.join(" ")}\n\n${truncatedStdout}${stderr ? `\n--- stderr ---\n${stderr.slice(0, 2000)}` : ""}`;
+			const text = `$ ${params.command} ${params.args.join(" ")}\n\n${truncateForModel(stdout)}${stderr ? `\n--- stderr ---\n${stderr.slice(0, 2000)}` : ""}`;
 			return { content: [{ type: "text", text }], details: { exitCode: 0, stdoutBytes: stdout.length } };
 		} catch (err) {
 			const e = err as NodeJS.ErrnoException & { stdout?: string; stderr?: string; code?: string | number };
