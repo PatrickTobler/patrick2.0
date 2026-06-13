@@ -16,7 +16,6 @@ import {
 	makeMcpDomainSubagent,
 	webSubagentSpec,
 } from "./subagents/mcp-domain.ts";
-import { makeMoltbookSubagentTool } from "./subagents/moltbook.ts";
 import { makeRedditSubagentTool } from "./subagents/reddit.ts";
 import { makeResearcherSubagentTool } from "./subagents/researcher.ts";
 import { actionTools } from "./tools/actions.ts";
@@ -188,7 +187,6 @@ export async function handleUserMessage(args: {
 				makeMcpDomainSubagent(linearSubagentSpec, () => mcpTools),
 				makeMcpDomainSubagent(duneSubagentSpec, () => mcpTools),
 				makeMcpDomainSubagent(webSubagentSpec, () => mcpTools),
-				makeMoltbookSubagentTool(),
 				makeRedditSubagentTool(),
 				makeLinkedinSubagentTool(),
 			],

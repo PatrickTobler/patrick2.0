@@ -15,7 +15,6 @@ import {
 	makeMcpDomainSubagent,
 	webSubagentSpec,
 } from "./subagents/mcp-domain.ts";
-import { makeMoltbookSubagentTool } from "./subagents/moltbook.ts";
 import { makeResearcherSubagentTool } from "./subagents/researcher.ts";
 import { actionTools } from "./tools/actions.ts";
 import { calendarTools } from "./tools/calendar.ts";
@@ -110,7 +109,6 @@ const TOOL_GROUPS: Record<string, () => AgentTool<any>[]> = {
 	linear: () => [makeMcpDomainSubagent(linearSubagentSpec, () => mcpToolsRef)],
 	dune: () => [makeMcpDomainSubagent(duneSubagentSpec, () => mcpToolsRef)],
 	web: () => [makeMcpDomainSubagent(webSubagentSpec, () => mcpToolsRef)],
-	moltbook: () => [makeMoltbookSubagentTool()],
 	linkedin: () => [makeLinkedinSubagentTool()],
 };
 

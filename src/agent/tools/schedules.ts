@@ -69,7 +69,7 @@ const AddSchema = Type.Object({
 	tools: Type.Optional(
 		Type.String({
 			description:
-				"Comma-separated tool groups this schedule needs (slim profile = cheaper + sharper runs). Omit for the full tool surface. Valid groups: facts, thinking, usage, vault, calendar, gmail, whoop, telegram, shell, skills, actions, mcp, coder, researcher, github, linear, dune, web, moltbook, linkedin. time tools are always included.",
+				"Comma-separated tool groups this schedule needs (slim profile = cheaper + sharper runs). Omit for the full tool surface. Valid groups: facts, thinking, usage, vault, calendar, gmail, whoop, telegram, shell, skills, actions, mcp, coder, researcher, github, linear, dune, web, linkedin. time tools are always included.",
 			maxLength: 300,
 		}),
 	),

@@ -207,9 +207,9 @@ flowchart LR
                                      │  │  • Shell:   run_shell            │  │
                                      │  │  • Skills:  list/read/reload     │  │
                                      │  │             (13 bundled)         │  │
-                                     │  │  • Subagents (8): coder,         │  │
+                                     │  │  • Subagents (7): coder,         │  │
                                      │  │     researcher, github, linear,  │  │
-                                     │  │     dune, web, moltbook, reddit  │  │
+                                     │  │     dune, web, reddit, linkedin  │  │
                                      │  └──────────────────────────────────┘  │
                                      │                                        │
                                      │  ┌──────────────────────────────────┐  │
@@ -329,7 +329,7 @@ Total surface for the main reactive agent: **~31 native tools + 8 subagents = ~3
 | `list_emails`, `read_email`, `draft_email`, `send_draft` | Gmail | Drafts always require explicit Patrick approval |
 | `add_schedule`, `list_schedules`, `update_schedule`, `pause_schedule`, `resume_schedule`, `delete_schedule` | Schedules | Cron-style proactive prompts; service auto-reloads on CRUD |
 | `run_shell` | Shell | Sandboxed `execFile` (not a real shell — args stay separate, env passes through) |
-| `delegate_to_coder`, `delegate_to_researcher`, `delegate_to_github`, `delegate_to_linear`, `delegate_to_dune`, `delegate_to_web`, `delegate_to_moltbook`, `delegate_to_reddit` | Subagents | Spawn focused sub-Agents (see table below) |
+| `delegate_to_coder`, `delegate_to_researcher`, `delegate_to_github`, `delegate_to_linear`, `delegate_to_dune`, `delegate_to_web`, `delegate_to_reddit`, `delegate_to_linkedin` | Subagents | Spawn focused sub-Agents (see table below) |
 
 > Native todo tools (`add_todo`, etc.) are **disabled** — Patrick uses Linear via the linear subagent. Code path is intact, table is kept; re-enable by adding `todoTools` back in `src/agent/loop.ts`.
 
@@ -373,7 +373,6 @@ A subagent is a tool whose `execute` spawns a fresh `Agent` with a focused syste
 | **linear** (`delegate_to_linear`) | fast | linear MCP only |
 | **dune** (`delegate_to_dune`) | fast | dune MCP only |
 | **web** (`delegate_to_web`) | fast | fetch MCP only |
-| **moltbook** (`delegate_to_moltbook`) | fast | shell, vault, facts (uses `MOLTBOOK_API_KEY` + `SOKOSUMI_API_KEY` from env via shell) |
 | **reddit** (`delegate_to_reddit`) | fast | shell, vault, facts (drives a stealth Browserbase Chromium session through residential proxies; cookies persisted in a Browserbase context cached on `/data`) |
 
 The four MCP-domain subagents (github/linear/dune/web) all share one factory in `src/agent/subagents/mcp-domain.ts` — pass a spec (tool name, MCP prefix, system prompt) and you get a delegating subagent. Adding a new MCP server is a 1-line spec.
@@ -472,7 +471,6 @@ patrick2.0/
 │   │       ├── coder.ts          # Qwen3-Coder Plus + GitHub + fetch + vault
 │   │       ├── researcher.ts     # Kimi K2-Thinking + fetch + vault
 │   │       ├── mcp-domain.ts     # factory for github/linear/dune/web domain subagents
-│   │       ├── moltbook.ts       # Moltbook engagement (shell + vault, MOLTBOOK + SOKOSUMI keys)
 │   │       └── reddit.ts         # Reddit via Browserbase + residential proxies
 │   │
 │   ├── scheduler/
@@ -570,8 +568,7 @@ patrick2.0/
 | `FAL_KEY` | no | fal.ai (used by `fal-ai` skill) |
 | `WISE_API_TOKEN` | no | Wise (used by `wise-bank` skill) |
 | `META_ADS_TOKEN`, `META_PIXEL_ID`, `META_AD_ACCOUNT_ID` | no | Meta Ads (used by `gtm-cli` skill) |
-| `MOLTBOOK_API_KEY` | no | Moltbook subagent — Bearer token for `api.moltbook.com` |
-| `SOKOSUMI_API_KEY` | no | Moltbook subagent — Bearer token for `masumi-agent-messenger` Elena thread replies |
+| `SOKOSUMI_API_KEY` | no | Sokosumi / `masumi-agent-messenger` API token (Sokosumi tasks + Elena thread replies) |
 | `BROWSERBASE_API_KEY`, `BROWSERBASE_PROJECT_ID` | no | Reddit subagent — stealth Chromium session host |
 | `REDDIT_EMAIL`, `REDDIT_PASSWORD` | no | Reddit subagent — login credentials (account dedicated to this bot) |
 | `MASUMI_AGENT_BACKUP_B64`, `MASUMI_AGENT_BACKUP_PASSPHRASE` | no | First-boot restore of masumi-agent-messenger namespace keys on Railway volume |

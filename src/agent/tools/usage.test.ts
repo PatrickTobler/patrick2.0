@@ -57,16 +57,18 @@ describe("formatUsageSummary", () => {
 import { formatAnomalies } from "./usage.ts";
 
 describe("formatAnomalies", () => {
-	it("flags sources far above baseline and new sources", () => {
+	// Models the zombie-spend case this detector exists for: a deleted subagent that
+	// kept costing money with no prior-7-day baseline (the Moltbook ghost-cron incident).
+	it("flags sources far above baseline and new/resurrected sources", () => {
 		const out = formatAnomalies(
 			[
-				{ source: "subagent:moltbook", windowCostUsd: 4.8, baselineDailyCostUsd: 0 },
+				{ source: "subagent:deleted-campaign", windowCostUsd: 4.8, baselineDailyCostUsd: 0 },
 				{ source: "scheduled", windowCostUsd: 0.9, baselineDailyCostUsd: 0.5 },
 				{ source: "facts", windowCostUsd: 0.02, baselineDailyCostUsd: 0.02 },
 			],
 			24,
 		);
-		expect(out).toContain("subagent:moltbook");
+		expect(out).toContain("subagent:deleted-campaign");
 		expect(out).toContain("NO spend in the prior 7 days");
 		expect(out).toContain("1.8x");
 		expect(out).not.toContain("facts");
